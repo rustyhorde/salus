@@ -3,8 +3,13 @@ name = "salus"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+unstable = []
+
 [dependencies]
 anyhow = { workspace = true }
+clap = { version = "4.5.47", features = ["derive"] }
+tracing = { workspace = true }
 
 [build-dependencies]
 rustversion = { workspace = true }

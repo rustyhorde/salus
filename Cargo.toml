@@ -6,3 +6,7 @@ members = ["libsalus", "salus"]
 [workspace.dependencies]
 anyhow = "1.0.99"
 rustversion = "1.0.22"
+tracing = { version = "0.1.41", features = [
+  "max_level_trace",
+  "release_max_level_trace",
+] }

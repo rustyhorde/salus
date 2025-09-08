@@ -242,6 +242,7 @@
 #![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-mod genkey;
+mod key;
 
-pub use crate::genkey::genkey;
+pub use crate::key::gen_key;
+pub use crate::key::unlock_key;
