@@ -1,0 +1,15 @@
+[package]
+name = "libsalus"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+unstable = []
+
+[dependencies]
+anyhow = { workspace = true }
+aws-lc-rs = "1.13.3"
+ssss = "1.0.2"
+
+[build-dependencies]
+rustversion = { workspace = true }
