@@ -5,6 +5,8 @@ members = ["libsalus", "salus", "salusd"]
 
 [workspace.dependencies]
 anyhow = "1.0.99"
+bincode = "2.0.1"
+bon = "3.7.2"
 interprocess = { version = "2.2.3", features = ["async", "tokio"] }
 rustversion = "1.0.22"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "time"] }

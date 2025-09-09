@@ -77,7 +77,7 @@ pub(crate) enum Commands {
         #[arg(short, long, default_value = "5")]
         num_shares: u8,
         /// The number of shares required to reconstruct the secret
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "3")]
         threshold: u8,
     },
     Unlock,

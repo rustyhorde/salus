@@ -9,6 +9,8 @@ unstable = []
 [dependencies]
 anyhow = { workspace = true }
 aws-lc-rs = "1.13.3"
+bincode = { workspace = true }
+bon = { workspace = true }
 ssss = "1.0.2"
 tracing = { workspace = true }
 

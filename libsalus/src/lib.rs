@@ -243,7 +243,11 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod key;
+mod message;
 
 pub use crate::key::gen_key;
 pub use crate::key::unlock_key;
+pub use crate::message::Init;
+pub use crate::message::Message;
+pub use crate::message::Share;
 pub use ssss::SsssConfig;

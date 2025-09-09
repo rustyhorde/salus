@@ -1,18 +1,29 @@
+// Copyright (c) 2025 salus developers
+//
+// Licensed under the Apache License, Version 2.0
+// <LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0> or the MIT
+// license <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. All files in the project carrying such notice may not be copied,
+// modified, or distributed except according to those terms.
+
 use std::io::ErrorKind;
 
 use anyhow::Result;
+use bincode::{config::standard, decode_from_slice, encode_to_vec};
 use interprocess::local_socket::{
-    GenericNamespaced, ListenerOptions, ToNsName, tokio::Stream, traits::tokio::Listener,
+    GenericNamespaced, ListenerOptions, ToNsName,
+    traits::tokio::{Listener, RecvHalf, Stream as _},
 };
+use libsalus::Message;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    try_join,
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
 };
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Pick a name.
-    let printname = "example.sock";
+    let printname = "/var/run/salus.sock";
     let name = printname.to_ns_name::<GenericNamespaced>()?;
 
     // Configure our listener...
@@ -54,37 +65,63 @@ async fn main() -> Result<()> {
             }
         };
 
+        let (mut receiver, mut sender) = conn.split();
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+
+        let _client_recv_handle = tokio::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                eprintln!("Got a message from a client: {message:?}");
+                match message {
+                    Message::Share(share) => {
+                        eprintln!("Share received: {}", share.share());
+                    }
+                    Message::Unlock => {
+                        eprintln!("Unlock requested, but not implemented.");
+                    }
+                    _ => {}
+                }
+                let mut blah = async || -> Result<()> {
+                    let message = encode_to_vec(Message::Success, standard())?;
+                    sender.write_all(&message).await?;
+                    sender.flush().await?;
+                    Ok(())
+                };
+                if let Err(e) = blah().await {
+                    eprintln!("There was an error when sending: {e}");
+                }
+            }
+        });
+
         // Spawn new parallel asynchronous tasks onto the Tokio runtime and hand the connection
         // over to them so that multiple clients could be processed simultaneously in a
         // lightweight fashion.
         tokio::spawn(async move {
             // The outer match processes errors that happen when we're connecting to something.
             // The inner if-let processes errors that happen during the connection.
-            if let Err(e) = handle_conn(conn).await {
+            eprintln!("Got a connection!");
+            if let Err(e) = handle_conn(&mut receiver, tx).await {
                 eprintln!("Error while handling connection: {e}");
             }
+            eprintln!("Connection closed.");
         });
     }
 }
 
 // Describe the things we do when we've got a connection ready.
-async fn handle_conn(conn: Stream) -> Result<()> {
-    let mut recver = BufReader::new(&conn);
-    let mut sender = &conn;
-
-    // Allocate a sizeable buffer for receiving. This size should be big enough and easy to
-    // find for the allocator.
-    let mut buffer = String::with_capacity(128);
-
-    // Describe the send operation as sending our whole message.
-    let send = sender.write_all(b"Hello from server!\n");
+async fn handle_conn<T: RecvHalf + Unpin>(
+    receiver: &mut T,
+    txc: mpsc::UnboundedSender<Message>,
+) -> Result<()> {
     // Describe the receive operation as receiving a line into our big buffer.
-    let recv = recver.read_line(&mut buffer);
+    let mut msg_buf = Vec::new();
+    let _msg_size = receiver.read_to_end(&mut msg_buf).await?;
 
-    // Run both operations concurrently.
-    try_join!(recv, send)?;
+    let decoded_res: Result<(Message, usize)> =
+        decode_from_slice(&msg_buf, standard()).map_err(Into::into);
+    if let Ok((message, _)) = decoded_res {
+        println!("Client sent: {:?}", message);
+        txc.send(message)?;
+    }
 
-    // Produce our output!
-    println!("Client answered: {}", buffer.trim());
     Ok(())
 }
