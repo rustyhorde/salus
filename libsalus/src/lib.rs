@@ -246,3 +246,4 @@ mod key;
 
 pub use crate::key::gen_key;
 pub use crate::key::unlock_key;
+pub use ssss::SsssConfig;

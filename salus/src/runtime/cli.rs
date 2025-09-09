@@ -7,8 +7,9 @@
 // modified, or distributed except according to those terms.
 
 use clap::{ArgAction, Parser, Subcommand};
+use config::{ConfigError, Map, Source, Value, ValueKind};
 
-#[derive(Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(version, about, long_about = None)]
 pub(crate) struct Cli {
     /// Set logging verbosity.  More v's, more verbose.
@@ -29,11 +30,55 @@ pub(crate) struct Cli {
         conflicts_with = "verbose"
     )]
     quiet: u8,
+    /// Config file path
+    #[clap(short, long, help = "Specify a path to the config file")]
+    config_path: Option<String>,
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
-#[derive(Subcommand)]
+impl Cli {
+    pub(crate) fn command(self) -> Commands {
+        self.command
+    }
+}
+
+impl Source for Cli {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new((*self).clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map = Map::new();
+        let origin = String::from("command line");
+        let _old = map.insert(
+            "verbose".to_string(),
+            Value::new(Some(&origin), ValueKind::U64(u8::into(self.verbose))),
+        );
+        let _old = map.insert(
+            "quiet".to_string(),
+            Value::new(Some(&origin), ValueKind::U64(u8::into(self.quiet))),
+        );
+        if let Some(config_path) = &self.config_path {
+            let _old = map.insert(
+                "config_path".to_string(),
+                Value::new(Some(&origin), ValueKind::String(config_path.clone())),
+            );
+        }
+        Ok(map)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Subcommand)]
 pub(crate) enum Commands {
     Genkey,
+    Init {
+        /// The number of shares to create
+        #[arg(short, long, default_value = "5")]
+        num_shares: u8,
+        /// The number of shares required to reconstruct the secret
+        #[arg(short, long, default_value = "5")]
+        threshold: u8,
+    },
+    Unlock,
 }

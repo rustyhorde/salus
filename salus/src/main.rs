@@ -242,13 +242,18 @@
 #![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-use std::process;
-
 use crate::error::{clap_or_error, success};
+use anyhow::Result;
+use std::process;
 
 mod error;
 mod runtime;
 
-fn main() {
-    process::exit(runtime::run::<Vec<&str>, &str>(None).map_or_else(clap_or_error, success))
+#[tokio::main]
+async fn main() -> Result<()> {
+    process::exit(
+        runtime::run::<Vec<&str>, &str>(None)
+            .await
+            .map_or_else(clap_or_error, success),
+    )
 }

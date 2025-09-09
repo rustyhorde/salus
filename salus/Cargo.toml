@@ -9,6 +9,10 @@ unstable = []
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4.5.47", features = ["derive"] }
+config = "0.15.15"
+interprocess = { workspace = true }
+libsalus = { path = "../libsalus" }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [build-dependencies]

@@ -1,11 +1,14 @@
 [workspace]
 resolver = "3"
 
-members = ["libsalus", "salus"]
+members = ["libsalus", "salus", "salusd"]
 
 [workspace.dependencies]
 anyhow = "1.0.99"
+interprocess = { version = "2.2.3", features = ["async", "tokio"] }
 rustversion = "1.0.22"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "time"] }
+
 tracing = { version = "0.1.41", features = [
   "max_level_trace",
   "release_max_level_trace",
