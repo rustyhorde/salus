@@ -50,6 +50,7 @@ impl Inter {
             if let Err(e) = blah().await {
                 eprintln!("There was an error when sending: {e}");
             }
+            drop(sender);
         });
 
         // Allocate a sizeable buffer for receiving. This size should be enough and should be easy to
