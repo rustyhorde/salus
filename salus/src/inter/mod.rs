@@ -19,6 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 #[derive(Builder, Clone, Debug)]
 pub(crate) struct Inter {
     #[builder(into, default = "/var/run/salus.sock")]
+    #[allow(dead_code)]
     name: String,
 }
 
