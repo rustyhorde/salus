@@ -25,10 +25,12 @@ pub(crate) struct Inter {
 impl Inter {
     pub(crate) async fn send(&self, message: Message) -> Result<()> {
         // Pick a name.
+        let base_socket = "salus.sock";
+        let ns_prefix = "/var/run/";
         let name = if GenericNamespaced::is_supported() {
-            self.name.clone().to_ns_name::<GenericNamespaced>()?
+            format!("{}{}", ns_prefix, base_socket).to_ns_name::<GenericNamespaced>()?
         } else {
-            format!("/tmp/{}", self.name).to_fs_name::<GenericFilePath>()?
+            format!("/tmp/{}", base_socket).to_fs_name::<GenericFilePath>()?
         };
 
         // Await this here since we can't do a whole lot without a connection.
