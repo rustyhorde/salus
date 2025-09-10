@@ -11,7 +11,7 @@ use std::io::ErrorKind;
 use anyhow::Result;
 use bincode::{config::standard, decode_from_slice, encode_to_vec};
 use interprocess::local_socket::{
-    GenericNamespaced, ListenerOptions, ToNsName,
+    GenericFilePath, GenericNamespaced, ListenerOptions, NameType, ToFsName, ToNsName,
     traits::tokio::{Listener, RecvHalf, Stream as _},
 };
 use libsalus::Message;
@@ -23,8 +23,13 @@ use tokio::{
 #[tokio::main]
 async fn main() -> Result<()> {
     // Pick a name.
-    let printname = "/var/run/salus.sock";
-    let name = printname.to_ns_name::<GenericNamespaced>()?;
+    let base_socket = "salus.sock";
+    let ns_prefix = "/var/run/";
+    let name = if GenericNamespaced::is_supported() {
+        format!("{}{}", ns_prefix, base_socket).to_ns_name::<GenericNamespaced>()?
+    } else {
+        format!("/tmp/{}", base_socket).to_fs_name::<GenericFilePath>()?
+    };
 
     // Configure our listener...
     let opts = ListenerOptions::new().name(name);
@@ -44,7 +49,7 @@ async fn main() -> Result<()> {
             // up to the user, but in a real application, you usually don't want to do that.
             eprintln!(
                 "Error: could not start server because the socket file is occupied. Please check
-                if {printname} is in use by another process and try again."
+                if {base_socket} is in use by another process and try again."
             );
             return Err(e.into());
         }
@@ -52,7 +57,7 @@ async fn main() -> Result<()> {
     };
 
     // The syncronization between the server and client, if any is used, goes here.
-    eprintln!("Server running at {printname}");
+    eprintln!("Server running at {base_socket}");
 
     // Set up our loop boilerplate that processes our incoming connections.
     loop {
