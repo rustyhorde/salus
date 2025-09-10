@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         format!("/tmp/{base_socket}").to_fs_name::<GenericFilePath>()?
     };
 
+    eprintln!("Name chosen: {name:?}");
     // Configure our listener...
     let opts = ListenerOptions::new().name(name);
 
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
     };
 
     // The syncronization between the server and client, if any is used, goes here.
-    eprintln!("Server running at {base_socket}");
+    eprintln!("Server running at {base_socket:?}");
 
     // Set up our loop boilerplate that processes our incoming connections.
     loop {
