@@ -26,9 +26,9 @@ async fn main() -> Result<()> {
     let base_socket = "salus.sock";
     let ns_prefix = "/var/run/";
     let name = if GenericNamespaced::is_supported() {
-        format!("{}{}", ns_prefix, base_socket).to_ns_name::<GenericNamespaced>()?
+        format!("{ns_prefix}{base_socket}").to_ns_name::<GenericNamespaced>()?
     } else {
-        format!("/tmp/{}", base_socket).to_fs_name::<GenericFilePath>()?
+        format!("/tmp/{base_socket}").to_fs_name::<GenericFilePath>()?
     };
 
     // Configure our listener...
