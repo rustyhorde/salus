@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Stylize, style};
-use libsalus::{Init, Message, Share, SsssConfig, gen_key};
+use libsalus::{Action, Init, Response, Share};
 use scanpw::scanpw;
 
 use crate::{
@@ -44,29 +44,36 @@ where
                 .num_shares(num_shares)
                 .threshold(threshold)
                 .build();
-            let message = Message::Init(init);
-            inter.send(message).await?;
-        }
-        Commands::Genkey => {
-            let shares = gen_key(&SsssConfig::default())?;
-            println!(
-                "These are your salus key shares.  Record them somewhere safe!  This will not be shown again."
-            );
-            println!();
-            for share in shares {
-                println!("{share}");
+            let message = Action::Init(init);
+            if let Response::Error = inter.send(message).await? {
+                eprintln!("Error occurred while initializing");
             }
         }
+        Commands::Genkey => match inter.send(Action::Genkey).await? {
+            Response::Shares(shares) => {
+                println!(
+                    "{}",
+                    "These are your salus key shares.  Record them somewhere safe!  This will not be shown again.".green().bold(),
+                );
+                println!();
+                for share in shares.shares() {
+                    println!("{share}");
+                }
+            }
+            _ => {
+                println!("Received unexpected response");
+            }
+        },
         Commands::Unlock => {
             println!("{}", "Enter your 3 shares, one per prompt".green().bold());
             println!();
             for i in 0..3 {
                 let share_in = scanpw!("{}", style(format!("Enter share {}/3: ", i + 1)).green());
                 let share = Share::builder().share(share_in).build();
-                let message = Message::Share(share);
-                inter.send(message).await?;
+                let message = Action::Share(share);
+                let _unused = inter.send(message).await?;
             }
-            inter.send(Message::Unlock).await?;
+            let _unused = inter.send(Action::Unlock).await?;
         }
     }
 

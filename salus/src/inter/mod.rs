@@ -9,11 +9,8 @@
 use anyhow::Result;
 use bincode::{config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
-use interprocess::local_socket::{
-    GenericFilePath, GenericNamespaced, NameType, ToFsName, ToNsName, tokio::Stream,
-    traits::tokio::Stream as _,
-};
-use libsalus::Message;
+use interprocess::local_socket::{tokio::Stream, traits::tokio::Stream as _};
+use libsalus::{Action, Response, socket_name};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Builder, Clone, Debug)]
@@ -24,15 +21,9 @@ pub(crate) struct Inter {
 }
 
 impl Inter {
-    pub(crate) async fn send(&self, message: Message) -> Result<()> {
+    pub(crate) async fn send(&self, message: Action) -> Result<Response> {
         // Pick a name.
-        let base_socket = "salus.sock";
-        let ns_prefix = "/var/run/";
-        let name = if GenericNamespaced::is_supported() {
-            format!("{ns_prefix}{base_socket}").to_ns_name::<GenericNamespaced>()?
-        } else {
-            format!("/tmp/{base_socket}").to_fs_name::<GenericFilePath>()?
-        };
+        let (_base_name, name) = socket_name()?;
 
         // Await this here since we can't do a whole lot without a connection.
         let conn = Stream::connect(name).await?;
@@ -63,27 +54,12 @@ impl Inter {
         // Describe the receive operation as receiving until a newline into our buffer.
         let mut msg_buf = Vec::new();
         let _msg_size = recver.read_to_end(&mut msg_buf).await?;
-        let dec_res: Result<(Message, usize)> =
+        let dec_res: Result<(Response, usize)> =
             decode_from_slice(&msg_buf, standard()).map_err(Into::into);
 
         match dec_res {
-            Ok((msg, _size)) => match msg {
-                Message::Success => {
-                    println!("Operation successful");
-                }
-                Message::Error => {
-                    println!("Operation failed");
-                }
-                _ => {
-                    println!("Received unexpected message: {msg:?}");
-                }
-            },
-            Err(e) => eprintln!("{e}"),
+            Ok((msg, _size)) => Ok(msg),
+            Err(e) => Err(e),
         }
-
-        // Close the connection a bit earlier than you'd think we would. Nice practice!
-        drop(recver);
-
-        Ok(())
     }
 }
