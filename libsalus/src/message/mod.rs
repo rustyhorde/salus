@@ -33,17 +33,41 @@ impl Share {
     }
 }
 
+/// A share message to send to the daemon
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct Shares {
+    #[builder(into)]
+    shares: Vec<String>,
+}
+
+impl Shares {
+    /// Get the shares
+    #[must_use]
+    pub fn shares(&self) -> &[String] {
+        &self.shares
+    }
+}
+
 /// A message to send to the daemon
 #[derive(Clone, Debug, Decode, Encode)]
-pub enum Message {
-    /// Init message
+pub enum Action {
+    /// Init
     Init(Init),
-    /// Unlock message
+    /// Unlock
     Unlock,
-    /// Success
-    Success,
-    /// Error
-    Error,
     /// Share
     Share(Share),
+    /// Genkey
+    Genkey,
+}
+
+/// A response from the daemon
+#[derive(Clone, Debug, Decode, Encode)]
+pub enum Response {
+    /// Error
+    Error,
+    /// Success
+    Success,
+    /// Shares
+    Shares(Shares),
 }

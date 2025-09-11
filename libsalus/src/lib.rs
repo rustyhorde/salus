@@ -242,12 +242,40 @@
 #![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+use anyhow::Result;
+use interprocess::local_socket::GenericFilePath;
+use interprocess::local_socket::Name;
+use interprocess::local_socket::ToFsName;
+
 mod key;
 mod message;
 
 pub use crate::key::gen_key;
 pub use crate::key::unlock_key;
+pub use crate::message::Action;
 pub use crate::message::Init;
-pub use crate::message::Message;
+pub use crate::message::Response;
 pub use crate::message::Share;
+pub use crate::message::Shares;
+use interprocess::local_socket::GenericNamespaced;
+use interprocess::local_socket::NameType;
+use interprocess::local_socket::ToNsName;
 pub use ssss::SsssConfig;
+
+/// Get the socket name used for interprocess communication.
+///
+/// # Errors
+///
+/// * An error can be thrown if the socket name cannot be created.
+///
+pub fn socket_name<'a>() -> Result<(&'static str, Name<'a>)> {
+    // Pick a name.
+    let base_socket = "salus.sock";
+    let ns_prefix = "/var/run/";
+    let name = if GenericNamespaced::is_supported() {
+        format!("{ns_prefix}{base_socket}").to_ns_name::<GenericNamespaced>()?
+    } else {
+        format!("/tmp/{base_socket}").to_fs_name::<GenericFilePath>()?
+    };
+    Ok((base_socket, name))
+}
