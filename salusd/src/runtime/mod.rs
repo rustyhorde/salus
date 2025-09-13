@@ -13,6 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use aws_lc_rs::aead::{AES_256_GCM, Aad, Nonce, RandomizedNonceKey};
 use bincode::{config::standard, decode_from_slice};
 use clap::Parser;
 use interprocess::local_socket::{
@@ -30,6 +31,7 @@ use tracing::{error, info, trace, warn};
 
 use crate::{
     config::{ConfigSalusd, load},
+    db::{SALUS_VAL_TABLE_DEF, SalusVal, initialize_redb, read_value},
     error::Error,
     handler::{ShareStore, ShareStoreMessage, handler},
     logging::initialize,
@@ -38,6 +40,7 @@ use crate::{
 
 mod cli;
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn run<I, T>(args: Option<I>) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -59,9 +62,12 @@ where
     trace!("configuration loaded");
     trace!("tracing initialized");
 
-    // Pick a name.
-    let (_base_name, name) = socket_name()?;
+    // Initialize the database
+    let redb = initialize_redb(&cli).with_context(|| Error::DatabaseInit)?;
+    trace!("database initialized");
 
+    // Setup the socket
+    let (_base_name, name) = socket_name()?;
     trace!("Socket setup");
 
     // Configure our listener...
@@ -92,34 +98,51 @@ where
     // The syncronization between the server and client, if any is used, goes here.
     info!("salusd daemon is running");
 
+    // Set up our share store and the message handler for it.
     let share_store = Arc::new(Mutex::new(ShareStore::default()));
-
     let (stx, mut srx) = unbounded_channel::<ShareStoreMessage>();
-
     let stx_c = stx.clone();
-    let _blah = spawn(async move {
+    let redb_c = redb.clone();
+    let _store_message_handler = spawn(async move {
         while let Some(ssm) = srx.recv().await {
             match ssm {
                 ShareStoreMessage::AddShare(share) => {
                     unlock_store(&share_store, |store: &mut ShareStore| {
                         store.add_share(share.clone());
-                        info!(
-                            "Added a share to the store. Total shares: {}",
-                            store.share_count()
-                        );
                     });
                 }
                 ShareStoreMessage::Unlock => {
                     unlock_store(&share_store, |store: &mut ShareStore| {
                         if let Ok(key) = unlock_key(&store.shares()) {
-                            info!("Possible key bytes generated");
-                            let interval = sleep(Duration::from_secs(20));
-                            let stx_c = stx_c.clone();
-                            let _blah = spawn(async move {
-                                interval.await;
-                                stx_c.send(ShareStoreMessage::ClearKey).unwrap();
-                            });
-                            store.add_key(key);
+                            let mut plaintext = String::new();
+                            if let Ok(Some(svag)) = read_value::<&str, SalusVal>(
+                                &redb_c.lock().unwrap(),
+                                SALUS_VAL_TABLE_DEF,
+                                "CHECK_KEY",
+                            ) {
+                                let sv = svag.value();
+                                let nonce = Nonce::from(sv.nonce());
+                                let key = RandomizedNonceKey::new(&AES_256_GCM, &key)
+                                    .with_context(|| Error::NonceKeyGen)
+                                    .unwrap();
+                                let mut ciphertext = sv.ciphertext().clone();
+                                let plaintext_b = key
+                                    .open_in_place(nonce, Aad::empty(), &mut ciphertext)
+                                    .with_context(|| Error::NonceKeyGen)
+                                    .unwrap();
+                                plaintext = String::from_utf8_lossy(plaintext_b).to_string();
+                            }
+
+                            if plaintext == "CHECK_KEY" {
+                                info!("Key successfully unlocked and verified.");
+                                let interval = sleep(Duration::from_secs(20));
+                                let stx_c = stx_c.clone();
+                                let _blah = spawn(async move {
+                                    interval.await;
+                                    stx_c.send(ShareStoreMessage::ClearKey).unwrap();
+                                });
+                                store.add_key(key);
+                            }
                         } else {
                             error!("Failed to unlock key with provided shares");
                         }
@@ -132,13 +155,15 @@ where
                         store.clear_key();
                     });
                 }
+                ShareStoreMessage::Init => {
+                    warn!("Initialize requested, but not implemented.");
+                }
             }
         }
     });
 
     // Set up our loop boilerplate that processes our incoming connections.
     loop {
-        // Sort out situations when establishing an incoming connection caused an error.
         let conn = match listener.accept().await {
             Ok(c) => c,
             Err(e) => {
@@ -150,31 +175,24 @@ where
         let (mut receiver, mut sender) = conn.split();
         let (tx, mut rx) = unbounded_channel::<Action>();
         let stx_c = stx.clone();
+        let redb_c = redb.clone();
 
         let _client_recv_handle = spawn(async move {
             while let Some(message) = rx.recv().await {
-                if let Err(e) = handler(&mut sender, message, stx_c.clone()).await {
+                if let Err(e) = handler(&mut sender, message, stx_c.clone(), redb_c.clone()).await {
                     error!("Error handling client message: {e}");
                 }
             }
         });
 
-        // Spawn new parallel asynchronous tasks onto the Tokio runtime and hand the connection
-        // over to them so that multiple clients could be processed simultaneously in a
-        // lightweight fashion.
         let _handle = spawn(async move {
-            // The outer match processes errors that happen when we're connecting to something.
-            // The inner if-let processes errors that happen during the connection.
-            trace!("Got a connection!");
             if let Err(e) = handle_conn(&mut receiver, tx).await {
                 error!("Error while handling connection: {e}");
             }
-            trace!("Connection closed.");
         });
     }
 }
 
-// Describe the things we do when we've got a connection ready.
 async fn handle_conn<T: RecvHalf + Unpin>(
     receiver: &mut T,
     txc: UnboundedSender<Action>,
@@ -186,7 +204,6 @@ async fn handle_conn<T: RecvHalf + Unpin>(
     let decoded_res: Result<(Action, usize)> =
         decode_from_slice(&msg_buf, standard()).map_err(Into::into);
     if let Ok((message, _)) = decoded_res {
-        trace!("Client sent: {message:?}");
         txc.send(message)?;
     }
 

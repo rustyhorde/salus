@@ -250,7 +250,7 @@ use interprocess::local_socket::ToFsName;
 mod key;
 mod message;
 
-pub use crate::key::gen_key;
+pub use crate::key::gen_shares;
 pub use crate::key::unlock_key;
 pub use crate::message::Action;
 pub use crate::message::Init;

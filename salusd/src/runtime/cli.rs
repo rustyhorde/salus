@@ -48,6 +48,9 @@ pub(crate) struct Cli {
         help = "Specify the absolute path to the tracing output file"
     )]
     tracing_absolute_path: Option<String>,
+    /// The absolute path to a non-standard database file
+    #[clap(short, long, help = "Specify the absolute path to the database file")]
+    database_absolute_path: Option<String>,
 }
 
 impl Source for Cli {
@@ -82,6 +85,12 @@ impl Source for Cli {
                 Value::new(Some(&origin), ValueKind::String(tracing_path.clone())),
             );
         }
+        if let Some(database_path) = &self.database_absolute_path {
+            let _old = map.insert(
+                "database_path".to_string(),
+                Value::new(Some(&origin), ValueKind::String(database_path.clone())),
+            );
+        }
         Ok(map)
     }
 }
@@ -112,6 +121,18 @@ impl PathDefaults for Cli {
     }
 
     fn default_tracing_file_name(&self) -> String {
+        env!("CARGO_PKG_NAME").to_string()
+    }
+
+    fn database_absolute_path(&self) -> Option<String> {
+        self.database_absolute_path.clone()
+    }
+
+    fn default_database_path(&self) -> String {
+        format!("/var/lib/{}", env!("CARGO_PKG_NAME"))
+    }
+
+    fn default_database_file_name(&self) -> String {
         env!("CARGO_PKG_NAME").to_string()
     }
 }

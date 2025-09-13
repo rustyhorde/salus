@@ -21,18 +21,22 @@ pub(crate) enum Error {
     ConfigLoad,
     #[error("Unable to initialize tracing")]
     TracingInit,
+    #[error("Unable to initialize the database")]
+    DatabaseInit,
+    #[error("Unable to generate a nonce key")]
+    NonceKeyGen,
 }
 
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn clap_or_error(err: anyhow::Error) -> i32 {
     let disp_err = || {
-        eprint!("{err:?}");
+        error!("{err:?}");
         1
     };
     match err.downcast_ref::<clap::Error>() {
         Some(e) => match e.kind() {
             ErrorKind::DisplayHelp => {
-                eprint!("{e}");
+                error!("{e}");
                 0
             }
             ErrorKind::DisplayVersion => 0,

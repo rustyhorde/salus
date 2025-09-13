@@ -32,6 +32,12 @@ pub(crate) trait PathDefaults {
     fn default_tracing_path(&self) -> String;
     /// The default log file name to use
     fn default_tracing_file_name(&self) -> String;
+    /// The absolute path to use for the database
+    fn database_absolute_path(&self) -> Option<String>;
+    /// The default database path to use
+    fn default_database_path(&self) -> String;
+    /// The default database file name to use
+    fn default_database_file_name(&self) -> String;
 }
 
 #[derive(Clone, CopyGetters, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize)]

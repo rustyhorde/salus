@@ -250,6 +250,7 @@ use anyhow::Result;
 use crate::error::{clap_or_error, success};
 
 mod config;
+mod db;
 mod error;
 mod handler;
 mod logging;
