@@ -8,19 +8,22 @@ unstable = []
 
 [dependencies]
 anyhow = { workspace = true }
+aws-lc-rs = { workspace = true }
 bincode = { workspace = true }
+bon = { workspace = true }
 clap = { version = "4.5.47", features = ["derive"] }
 config = { workspace = true }
 dirs2 = "3.0.1"
 getset = "0.1.6"
 interprocess = { workspace = true }
 libsalus = { path = "../libsalus" }
+redb = "3.0.1"
 serde = { version = "1.0.219", features = ["derive"] }
 thiserror = "2.0.16"
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "fmt", "time"] }
-tracing-subscriber-init = { version = "0.1.3", features = ["time"] }
+tracing-subscriber-init = { version = "0.1.4", features = ["time"] }
 
 [build-dependencies]
 rustversion = { workspace = true }

@@ -6,23 +6,36 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use anyhow::Result;
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result};
+use aws_lc_rs::{
+    aead::{AES_256_GCM, Aad, RandomizedNonceKey},
+    rand,
+};
 use bincode::{config::standard, encode_to_vec};
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Response, Shares, SsssConfig, gen_key};
+use libsalus::{Action, Response, Shares, SsssConfig, gen_shares};
+use redb::Database;
 use tokio::{io::AsyncWriteExt, sync::mpsc::UnboundedSender};
-use tracing::{error, trace, warn};
+use tracing::error;
+
+use crate::{
+    db::{SALUS_CONFIG_TABLE_DEF, SALUS_VAL_TABLE_DEF, SalusVal, read_value, write_value},
+    error::Error,
+};
 
 pub(crate) enum ShareStoreMessage {
     AddShare(String),
     Unlock,
     ClearKey,
+    Init,
 }
 
 #[derive(Default)]
 pub(crate) struct ShareStore {
     shares: Vec<String>,
-    key: Vec<u8>,
+    key: Option<Vec<u8>>,
 }
 
 impl ShareStore {
@@ -31,19 +44,15 @@ impl ShareStore {
     }
 
     pub(crate) fn clear_key(&mut self) {
-        self.key.clear();
+        self.key = None;
     }
 
     pub(crate) fn add_key(&mut self, key: Vec<u8>) {
-        self.key = key;
+        self.key = Some(key);
     }
 
     pub(crate) fn add_share(&mut self, share: String) {
         self.shares.push(share);
-    }
-
-    pub(crate) fn share_count(&self) -> usize {
-        self.shares.len()
     }
 
     pub(crate) fn shares(&self) -> Vec<String> {
@@ -55,20 +64,68 @@ pub(crate) async fn handler<T: SendHalf + Unpin>(
     sender: &mut T,
     message: Action,
     stx: UnboundedSender<ShareStoreMessage>,
+    redb: Arc<Mutex<Database>>,
 ) -> Result<()> {
-    trace!("Got a message from a client: {message:?}");
     match message {
         Action::Genkey => {
-            if let Ok(shares) = gen_key(&SsssConfig::default()) {
-                let shares_msg = Response::Shares(Shares::builder().shares(shares).build());
-                response(sender, shares_msg).await?;
+            let mut initialized = false;
+            unlock_redb(&redb, |db| -> Result<()> {
+                if let Ok(init_opt) =
+                    read_value::<&str, bool>(db, SALUS_CONFIG_TABLE_DEF, "INITIALIZED")
+                    && let Some(init) = init_opt
+                {
+                    initialized = init.value();
+                }
+                Ok(())
+            })?;
+
+            if initialized {
+                response(sender, Response::AlreadyInitialiazed).await?;
             } else {
-                error!("Error generating shares");
-                error(sender).await?;
+                let mut key = [0u8; 32];
+                rand::fill(&mut key)?;
+                if let Ok(shares) = gen_shares(&SsssConfig::default(), &key) {
+                    let key = RandomizedNonceKey::new(&AES_256_GCM, &key)
+                        .with_context(|| Error::NonceKeyGen)?;
+                    let mut check_key = b"CHECK_KEY".to_vec();
+                    let nonce = key.seal_in_place_append_tag(Aad::empty(), &mut check_key)?;
+                    unlock_redb(&redb, |db| -> Result<()> {
+                        let salus_val = SalusVal::builder()
+                            .nonce(*nonce.as_ref())
+                            .ciphertext(check_key.clone())
+                            .build();
+                        if let Err(e) = write_value::<&str, SalusVal>(
+                            db,
+                            SALUS_VAL_TABLE_DEF,
+                            "CHECK_KEY",
+                            salus_val,
+                        ) {
+                            error!("Error writing CHECK_KEY to database: {e}");
+                            return Err(e);
+                        }
+                        if let Err(e) = write_value::<&str, bool>(
+                            db,
+                            SALUS_CONFIG_TABLE_DEF,
+                            "INITIALIZED",
+                            true,
+                        ) {
+                            error!("Error writing INITIALIZED to database: {e}");
+                            return Err(e);
+                        }
+                        Ok(())
+                    })?;
+                    let shares_msg = Response::Shares(Shares::builder().shares(shares).build());
+                    response(sender, shares_msg).await?;
+                } else {
+                    error!("Error generating shares");
+                    error(sender).await?;
+                }
+                unlock_redb(&redb, |db| -> Result<()> {
+                    write_value::<&str, bool>(db, SALUS_CONFIG_TABLE_DEF, "INITIALIZED", true)
+                })?;
             }
         }
         Action::Share(share) => {
-            trace!("Share received");
             stx.send(ShareStoreMessage::AddShare(share.share().to_string()))?;
             success(sender).await?;
         }
@@ -77,7 +134,7 @@ pub(crate) async fn handler<T: SendHalf + Unpin>(
             success(sender).await?;
         }
         Action::Init(_init) => {
-            warn!("Initialize requested, but not implemented.");
+            stx.send(ShareStoreMessage::Init)?;
             success(sender).await?;
         }
     }
@@ -97,4 +154,15 @@ async fn success<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
 
 async fn error<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
     response(sender, Response::Error).await
+}
+
+fn unlock_redb(
+    redb_s: &Arc<Mutex<Database>>,
+    mut redb_fn: impl FnMut(&mut Database) -> Result<()>,
+) -> Result<()> {
+    let mut redb = match redb_s.lock() {
+        Ok(share_store) => share_store,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    redb_fn(&mut redb)
 }

@@ -60,6 +60,9 @@ where
                     println!("{share}");
                 }
             }
+            Response::AlreadyInitialiazed => {
+                println!("{}", "The share store is already initialized".red().bold());
+            }
             _ => {
                 println!("Received unexpected response");
             }

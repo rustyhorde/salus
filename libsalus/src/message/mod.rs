@@ -70,4 +70,6 @@ pub enum Response {
     Success,
     /// Shares
     Shares(Shares),
+    /// The share store is already initialized
+    AlreadyInitialiazed,
 }
