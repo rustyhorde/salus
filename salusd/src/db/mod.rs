@@ -70,7 +70,7 @@ impl Value for SalusVal {
 pub(crate) const SALUS_CONFIG_TABLE_DEF: TableDefinition<'_, &str, bool> =
     TableDefinition::new("salus_config");
 
-pub(crate) const SALUS_VAL_TABLE_DEF: TableDefinition<'_, &str, SalusVal> =
+pub(crate) const SALUS_VAL_TABLE_DEF: TableDefinition<'_, String, SalusVal> =
     TableDefinition::new("salus_store");
 
 pub(crate) fn initialize_redb<T: PathDefaults>(defaults: &T) -> Result<Arc<Mutex<Database>>> {
@@ -136,4 +136,15 @@ where
     database_file_path.push(defaults.default_database_file_name());
     let _ = database_file_path.set_extension("redb");
     Ok(database_file_path)
+}
+
+pub(crate) fn unlock_redb(
+    redb_s: &Arc<Mutex<Database>>,
+    mut redb_fn: impl FnMut(&mut Database) -> Result<()>,
+) -> Result<()> {
+    let mut redb = match redb_s.lock() {
+        Ok(share_store) => share_store,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    redb_fn(&mut redb)
 }

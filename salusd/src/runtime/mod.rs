@@ -31,7 +31,7 @@ use tracing::{error, info, trace, warn};
 
 use crate::{
     config::{ConfigSalusd, load},
-    db::{SALUS_VAL_TABLE_DEF, SalusVal, initialize_redb, read_value},
+    db::{SALUS_VAL_TABLE_DEF, SalusVal, initialize_redb, read_value, unlock_redb, write_value},
     error::Error,
     handler::{ShareStore, ShareStoreMessage, handler},
     logging::initialize,
@@ -113,38 +113,53 @@ where
                 }
                 ShareStoreMessage::Unlock => {
                     unlock_store(&share_store, |store: &mut ShareStore| {
-                        if let Ok(key) = unlock_key(&store.shares()) {
-                            let mut plaintext = String::new();
-                            if let Ok(Some(svag)) = read_value::<&str, SalusVal>(
-                                &redb_c.lock().unwrap(),
-                                SALUS_VAL_TABLE_DEF,
-                                "CHECK_KEY",
-                            ) {
-                                let sv = svag.value();
-                                let nonce = Nonce::from(sv.nonce());
-                                let key = RandomizedNonceKey::new(&AES_256_GCM, &key)
-                                    .with_context(|| Error::NonceKeyGen)
-                                    .unwrap();
-                                let mut ciphertext = sv.ciphertext().clone();
-                                let plaintext_b = key
-                                    .open_in_place(nonce, Aad::empty(), &mut ciphertext)
-                                    .with_context(|| Error::NonceKeyGen)
-                                    .unwrap();
-                                plaintext = String::from_utf8_lossy(plaintext_b).to_string();
+                        match unlock_key(&store.shares()) {
+                            Ok(key) => {
+                                match read_value::<String, SalusVal>(
+                                    &redb_c.lock().unwrap(),
+                                    SALUS_VAL_TABLE_DEF,
+                                    "CHECK_KEY".to_string(),
+                                ) {
+                                    Err(e) => {
+                                        error!("Error reading CHECK_KEY from database: {e}");
+                                        return;
+                                    }
+                                    Ok(None) => {
+                                        error!("CHECK_KEY not found in database");
+                                        return;
+                                    }
+                                    Ok(Some(svag)) => {
+                                        let sv = svag.value();
+                                        let nonce = Nonce::from(sv.nonce());
+                                        let rnkey = RandomizedNonceKey::new(&AES_256_GCM, &key)
+                                            .with_context(|| Error::NonceKeyGen)
+                                            .unwrap();
+                                        let mut ciphertext = sv.ciphertext().clone();
+                                        let plaintext_b = rnkey
+                                            .open_in_place(nonce, Aad::empty(), &mut ciphertext)
+                                            .with_context(|| Error::NonceKeyGen)
+                                            .unwrap();
+                                        let plaintext =
+                                            String::from_utf8_lossy(plaintext_b).to_string();
+                                        trace!(
+                                            "Unlocked key with shares, got plaintext: {plaintext}"
+                                        );
+                                        if plaintext == "CHECK_KEY" {
+                                            info!("Key successfully unlocked and verified.");
+                                            let interval = sleep(Duration::from_secs(20));
+                                            let stx_c = stx_c.clone();
+                                            let _blah = spawn(async move {
+                                                interval.await;
+                                                stx_c.send(ShareStoreMessage::ClearKey).unwrap();
+                                            });
+                                            store.add_key(key);
+                                        } else {
+                                            error!("Failed to unlock key with provided shares");
+                                        }
+                                    }
+                                }
                             }
-
-                            if plaintext == "CHECK_KEY" {
-                                info!("Key successfully unlocked and verified.");
-                                let interval = sleep(Duration::from_secs(20));
-                                let stx_c = stx_c.clone();
-                                let _blah = spawn(async move {
-                                    interval.await;
-                                    stx_c.send(ShareStoreMessage::ClearKey).unwrap();
-                                });
-                                store.add_key(key);
-                            }
-                        } else {
-                            error!("Failed to unlock key with provided shares");
+                            Err(e) => error!("Failed to unlock key with provided shares: {e}"),
                         }
                         store.clear_shares();
                     });
@@ -157,6 +172,44 @@ where
                 }
                 ShareStoreMessage::Init => {
                     warn!("Initialize requested, but not implemented.");
+                }
+                ShareStoreMessage::Store(store_val) => {
+                    unlock_store(&share_store, |store: &mut ShareStore| {
+                        let key_val = store_val.key();
+                        let mut value = store_val.value().as_bytes().to_vec();
+
+                        if let Some(key) = store.key() {
+                            let nonce_key = RandomizedNonceKey::new(&AES_256_GCM, &key)
+                                .with_context(|| Error::NonceKeyGen)
+                                .unwrap();
+                            let nonce = nonce_key
+                                .seal_in_place_append_tag(Aad::empty(), &mut value)
+                                .unwrap();
+                            let _res = unlock_redb(&redb_c, |db| -> Result<()> {
+                                let salus_val = SalusVal::builder()
+                                    .nonce(*nonce.as_ref())
+                                    .ciphertext(value.clone())
+                                    .build();
+                                match write_value::<String, SalusVal>(
+                                    db,
+                                    SALUS_VAL_TABLE_DEF,
+                                    key_val.to_string(),
+                                    salus_val,
+                                ) {
+                                    Err(e) => {
+                                        error!("Error writing value to database: {e}");
+                                        return Err(e);
+                                    }
+                                    Ok(()) => {
+                                        info!("Stored value under key: {key_val}");
+                                    }
+                                }
+                                Ok(())
+                            });
+                        } else {
+                            error!("No key available to store value");
+                        }
+                    });
                 }
             }
         }

@@ -257,6 +257,7 @@ pub use crate::message::Init;
 pub use crate::message::Response;
 pub use crate::message::Share;
 pub use crate::message::Shares;
+pub use crate::message::Store;
 use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::NameType;
 use interprocess::local_socket::ToNsName;
