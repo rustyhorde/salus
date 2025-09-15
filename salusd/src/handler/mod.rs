@@ -15,13 +15,15 @@ use aws_lc_rs::{
 };
 use bincode::{config::standard, encode_to_vec};
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Response, Shares, SsssConfig, gen_shares};
+use libsalus::{Action, Response, Shares, SsssConfig, Store, gen_shares};
 use redb::Database;
 use tokio::{io::AsyncWriteExt, sync::mpsc::UnboundedSender};
 use tracing::error;
 
 use crate::{
-    db::{SALUS_CONFIG_TABLE_DEF, SALUS_VAL_TABLE_DEF, SalusVal, read_value, write_value},
+    db::{
+        SALUS_CONFIG_TABLE_DEF, SALUS_VAL_TABLE_DEF, SalusVal, read_value, unlock_redb, write_value,
+    },
     error::Error,
 };
 
@@ -30,6 +32,7 @@ pub(crate) enum ShareStoreMessage {
     Unlock,
     ClearKey,
     Init,
+    Store(Store),
 }
 
 #[derive(Default)]
@@ -57,6 +60,10 @@ impl ShareStore {
 
     pub(crate) fn shares(&self) -> Vec<String> {
         self.shares.clone()
+    }
+
+    pub(crate) fn key(&self) -> Option<Vec<u8>> {
+        self.key.clone()
     }
 }
 
@@ -94,10 +101,10 @@ pub(crate) async fn handler<T: SendHalf + Unpin>(
                             .nonce(*nonce.as_ref())
                             .ciphertext(check_key.clone())
                             .build();
-                        if let Err(e) = write_value::<&str, SalusVal>(
+                        if let Err(e) = write_value::<String, SalusVal>(
                             db,
                             SALUS_VAL_TABLE_DEF,
-                            "CHECK_KEY",
+                            "CHECK_KEY".to_string(),
                             salus_val,
                         ) {
                             error!("Error writing CHECK_KEY to database: {e}");
@@ -137,6 +144,10 @@ pub(crate) async fn handler<T: SendHalf + Unpin>(
             stx.send(ShareStoreMessage::Init)?;
             success(sender).await?;
         }
+        Action::Store(store) => {
+            stx.send(ShareStoreMessage::Store(store))?;
+            success(sender).await?;
+        }
     }
     Ok(())
 }
@@ -154,15 +165,4 @@ async fn success<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
 
 async fn error<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
     response(sender, Response::Error).await
-}
-
-fn unlock_redb(
-    redb_s: &Arc<Mutex<Database>>,
-    mut redb_fn: impl FnMut(&mut Database) -> Result<()>,
-) -> Result<()> {
-    let mut redb = match redb_s.lock() {
-        Ok(share_store) => share_store,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    redb_fn(&mut redb)
 }

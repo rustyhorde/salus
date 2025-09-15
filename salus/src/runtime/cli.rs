@@ -69,7 +69,7 @@ impl Source for Cli {
     }
 }
 
-#[derive(Clone, Copy, Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 pub(crate) enum Commands {
     Genkey,
     Init {
@@ -81,4 +81,12 @@ pub(crate) enum Commands {
         threshold: u8,
     },
     Unlock,
+    Store {
+        /// The key to store the value under
+        #[arg(short, long)]
+        key: String,
+        /// The value to store
+        #[arg(short, long)]
+        value: String,
+    },
 }

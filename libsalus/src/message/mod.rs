@@ -48,6 +48,29 @@ impl Shares {
     }
 }
 
+/// A store message to send to the daemon
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct Store {
+    #[builder(into)]
+    key: String,
+    #[builder(into)]
+    value: String,
+}
+
+impl Store {
+    /// Get the key
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Get the value
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
 /// A message to send to the daemon
 #[derive(Clone, Debug, Decode, Encode)]
 pub enum Action {
@@ -59,6 +82,8 @@ pub enum Action {
     Share(Share),
     /// Genkey
     Genkey,
+    /// Store
+    Store(Store),
 }
 
 /// A response from the daemon

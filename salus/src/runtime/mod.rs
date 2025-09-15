@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Stylize, style};
-use libsalus::{Action, Init, Response, Share};
+use libsalus::{Action, Init, Response, Share, Store};
 use scanpw::scanpw;
 
 use crate::{
@@ -77,6 +77,12 @@ where
                 let _unused = inter.send(message).await?;
             }
             let _unused = inter.send(Action::Unlock).await?;
+        }
+        Commands::Store { key, value } => {
+            let message = Action::Store(Store::builder().key(key).value(value).build());
+            if let Response::Error = inter.send(message).await? {
+                eprintln!("Error occurred while storing value");
+            }
         }
     }
 
