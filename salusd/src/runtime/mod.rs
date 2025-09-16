@@ -13,29 +13,28 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use aws_lc_rs::aead::{AES_256_GCM, Aad, Nonce, RandomizedNonceKey};
 use bincode::{config::standard, decode_from_slice};
 use clap::Parser;
 use interprocess::local_socket::{
     ListenerOptions,
     traits::tokio::{Listener, RecvHalf, Stream as _},
 };
-use libsalus::{Action, socket_name, unlock_key};
+use libsalus::{Action, socket_name};
 use tokio::{
     io::AsyncReadExt,
     spawn,
     sync::mpsc::{UnboundedSender, unbounded_channel},
-    time::{Duration, sleep},
 };
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 
 use crate::{
     config::{ConfigSalusd, load},
-    db::{SALUS_VAL_TABLE_DEF, SalusVal, initialize_redb, read_value, unlock_redb, write_value},
+    db::initialize_redb,
     error::Error,
-    handler::{ShareStore, ShareStoreMessage, handler},
+    handler::ActionHandler,
     logging::initialize,
     runtime::cli::Cli,
+    store::ShareStore,
 };
 
 mod cli;
@@ -68,7 +67,7 @@ where
 
     // Setup the socket
     let (_base_name, name) = socket_name()?;
-    trace!("Socket setup");
+    trace!("socket setup");
 
     // Configure our listener...
     let opts = ListenerOptions::new().name(name);
@@ -99,121 +98,7 @@ where
     info!("salusd daemon is running");
 
     // Set up our share store and the message handler for it.
-    let share_store = Arc::new(Mutex::new(ShareStore::default()));
-    let (stx, mut srx) = unbounded_channel::<ShareStoreMessage>();
-    let stx_c = stx.clone();
-    let redb_c = redb.clone();
-    let _store_message_handler = spawn(async move {
-        while let Some(ssm) = srx.recv().await {
-            match ssm {
-                ShareStoreMessage::AddShare(share) => {
-                    unlock_store(&share_store, |store: &mut ShareStore| {
-                        store.add_share(share.clone());
-                    });
-                }
-                ShareStoreMessage::Unlock => {
-                    unlock_store(&share_store, |store: &mut ShareStore| {
-                        match unlock_key(&store.shares()) {
-                            Ok(key) => {
-                                match read_value::<String, SalusVal>(
-                                    &redb_c.lock().unwrap(),
-                                    SALUS_VAL_TABLE_DEF,
-                                    "CHECK_KEY".to_string(),
-                                ) {
-                                    Err(e) => {
-                                        error!("Error reading CHECK_KEY from database: {e}");
-                                        return;
-                                    }
-                                    Ok(None) => {
-                                        error!("CHECK_KEY not found in database");
-                                        return;
-                                    }
-                                    Ok(Some(svag)) => {
-                                        let sv = svag.value();
-                                        let nonce = Nonce::from(sv.nonce());
-                                        let rnkey = RandomizedNonceKey::new(&AES_256_GCM, &key)
-                                            .with_context(|| Error::NonceKeyGen)
-                                            .unwrap();
-                                        let mut ciphertext = sv.ciphertext().clone();
-                                        let plaintext_b = rnkey
-                                            .open_in_place(nonce, Aad::empty(), &mut ciphertext)
-                                            .with_context(|| Error::NonceKeyGen)
-                                            .unwrap();
-                                        let plaintext =
-                                            String::from_utf8_lossy(plaintext_b).to_string();
-                                        trace!(
-                                            "Unlocked key with shares, got plaintext: {plaintext}"
-                                        );
-                                        if plaintext == "CHECK_KEY" {
-                                            info!("Key successfully unlocked and verified.");
-                                            let interval = sleep(Duration::from_secs(20));
-                                            let stx_c = stx_c.clone();
-                                            let _blah = spawn(async move {
-                                                interval.await;
-                                                stx_c.send(ShareStoreMessage::ClearKey).unwrap();
-                                            });
-                                            store.add_key(key);
-                                        } else {
-                                            error!("Failed to unlock key with provided shares");
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => error!("Failed to unlock key with provided shares: {e}"),
-                        }
-                        store.clear_shares();
-                    });
-                }
-                ShareStoreMessage::ClearKey => {
-                    unlock_store(&share_store, |store: &mut ShareStore| {
-                        warn!("Key cleared due to timeout.");
-                        store.clear_key();
-                    });
-                }
-                ShareStoreMessage::Init => {
-                    warn!("Initialize requested, but not implemented.");
-                }
-                ShareStoreMessage::Store(store_val) => {
-                    unlock_store(&share_store, |store: &mut ShareStore| {
-                        let key_val = store_val.key();
-                        let mut value = store_val.value().as_bytes().to_vec();
-
-                        if let Some(key) = store.key() {
-                            let nonce_key = RandomizedNonceKey::new(&AES_256_GCM, &key)
-                                .with_context(|| Error::NonceKeyGen)
-                                .unwrap();
-                            let nonce = nonce_key
-                                .seal_in_place_append_tag(Aad::empty(), &mut value)
-                                .unwrap();
-                            let _res = unlock_redb(&redb_c, |db| -> Result<()> {
-                                let salus_val = SalusVal::builder()
-                                    .nonce(*nonce.as_ref())
-                                    .ciphertext(value.clone())
-                                    .build();
-                                match write_value::<String, SalusVal>(
-                                    db,
-                                    SALUS_VAL_TABLE_DEF,
-                                    key_val.to_string(),
-                                    salus_val,
-                                ) {
-                                    Err(e) => {
-                                        error!("Error writing value to database: {e}");
-                                        return Err(e);
-                                    }
-                                    Ok(()) => {
-                                        info!("Stored value under key: {key_val}");
-                                    }
-                                }
-                                Ok(())
-                            });
-                        } else {
-                            error!("No key available to store value");
-                        }
-                    });
-                }
-            }
-        }
-    });
+    let share_store = Arc::new(Mutex::new(ShareStore::builder().redb(redb.clone()).build()));
 
     // Set up our loop boilerplate that processes our incoming connections.
     loop {
@@ -225,14 +110,16 @@ where
             }
         };
 
-        let (mut receiver, mut sender) = conn.split();
+        let (mut receiver, sender) = conn.split();
         let (tx, mut rx) = unbounded_channel::<Action>();
-        let stx_c = stx.clone();
-        let redb_c = redb.clone();
-
+        let share_store_c = share_store.clone();
         let _client_recv_handle = spawn(async move {
+            let mut action_handler = ActionHandler::builder()
+                .sender(sender)
+                .store(share_store_c)
+                .build();
             while let Some(message) = rx.recv().await {
-                if let Err(e) = handler(&mut sender, message, stx_c.clone(), redb_c.clone()).await {
+                if let Err(e) = action_handler.action_handler(message).await {
                     error!("Error handling client message: {e}");
                 }
             }
@@ -261,12 +148,4 @@ async fn handle_conn<T: RecvHalf + Unpin>(
     }
 
     Ok(())
-}
-
-fn unlock_store(store: &Arc<Mutex<ShareStore>>, store_fn: impl Fn(&mut ShareStore)) {
-    let mut share_store = match store.lock() {
-        Ok(share_store) => share_store,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    store_fn(&mut share_store);
 }

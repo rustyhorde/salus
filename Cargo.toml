@@ -8,7 +8,8 @@ anyhow = "1.0.99"
 aws-lc-rs = "1.14.0"
 bincode = "2.0.1"
 bon = "3.7.2"
-config = "0.15.15"
+config = "0.15.16"
+getset = "0.1.6"
 interprocess = { version = "2.2.3", features = ["async", "tokio"] }
 rustversion = "1.0.22"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "time"] }

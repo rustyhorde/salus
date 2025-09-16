@@ -25,6 +25,11 @@ pub(crate) enum Error {
     DatabaseInit,
     #[error("Unable to generate a nonce key")]
     NonceKeyGen,
+    #[allow(dead_code)]
+    #[error("Could not find CHECK_KEY in database")]
+    CheckKeyNotFound,
+    #[error("Error generating shares")]
+    ShareGeneration,
 }
 
 #[allow(clippy::needless_pass_by_value)]

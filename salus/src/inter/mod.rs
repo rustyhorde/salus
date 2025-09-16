@@ -47,10 +47,6 @@ impl Inter {
             drop(sender);
         });
 
-        // Allocate a sizeable buffer for receiving. This size should be enough and should be easy to
-        // find for the allocator.
-        // let mut buffer = String::with_capacity(128);
-
         // Describe the receive operation as receiving until a newline into our buffer.
         let mut msg_buf = Vec::new();
         let _msg_size = recver.read_to_end(&mut msg_buf).await?;
