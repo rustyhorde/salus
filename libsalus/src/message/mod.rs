@@ -8,12 +8,16 @@
 
 use bincode::{Decode, Encode};
 use bon::Builder;
+use getset::CopyGetters;
 
 /// The init message to send to the daemon
-#[derive(Builder, Clone, Copy, Debug, Decode, Encode)]
+#[derive(Builder, Clone, Copy, CopyGetters, Debug, Decode, Encode)]
+#[getset(get_copy = "pub")]
 pub struct Init {
+    /// The number of shares to create
     #[builder(default = 5)]
     num_shares: u8,
+    /// The minimum number of shares needed to reconstruct the key
     #[builder(default = 3)]
     threshold: u8,
 }
@@ -74,27 +78,31 @@ impl Store {
 /// A message to send to the daemon
 #[derive(Clone, Debug, Decode, Encode)]
 pub enum Action {
-    /// Init
-    Init(Init),
-    /// Unlock
+    /// Attempt to unlock the store
     Unlock,
-    /// Share
+    /// Send a share to the daemon
     Share(Share),
-    /// Genkey
-    Genkey,
-    /// Store
+    /// Generate the salus shares
+    GenShares(u8, u8),
+    /// Store an encrypted value
     Store(Store),
+    /// Read an encrypted value
+    Read(String),
+    /// Get the threshold
+    GetThreshold,
 }
 
 /// A response from the daemon
 #[derive(Clone, Debug, Decode, Encode)]
 pub enum Response {
     /// Error
-    Error,
+    Error(String),
     /// Success
     Success,
     /// Shares
     Shares(Shares),
     /// The share store is already initialized
     AlreadyInitialiazed,
+    /// The threshold
+    Threshold(u8),
 }

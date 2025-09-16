@@ -255,6 +255,7 @@ mod error;
 mod handler;
 mod logging;
 mod runtime;
+mod store;
 mod utils;
 
 #[tokio::main]

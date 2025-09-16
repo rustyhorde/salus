@@ -10,6 +10,7 @@ unstable = []
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bon = { workspace = true }
+getset = { workspace = true }
 interprocess = { workspace = true }
 ssss = "1.0.2"
 tracing = { workspace = true }

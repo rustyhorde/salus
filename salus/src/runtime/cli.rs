@@ -71,8 +71,7 @@ impl Source for Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 pub(crate) enum Commands {
-    Genkey,
-    Init {
+    Shares {
         /// The number of shares to create
         #[arg(short, long, default_value = "5")]
         num_shares: u8,

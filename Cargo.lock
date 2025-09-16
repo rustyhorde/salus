@@ -863,6 +863,7 @@ dependencies = [
  "aws-lc-rs",
  "bincode",
  "bon",
+ "getset",
  "interprocess",
  "rand",
  "rustversion",

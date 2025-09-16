@@ -13,65 +13,25 @@ use std::{
 };
 
 use anyhow::Result;
-use bon::Builder;
-use getset::Getters;
-use redb::{AccessGuard, Database, Key, ReadableDatabase, TableDefinition, TypeName, Value};
+use redb::{AccessGuard, Database, Key, ReadableDatabase, TableDefinition, Value};
 
-use crate::{config::PathDefaults, utils::to_path_buf};
+use crate::{
+    config::PathDefaults,
+    db::values::{config::ConfigVal, salus::SalusVal},
+    utils::to_path_buf,
+};
 
-#[derive(Builder, Clone, Debug, Getters)]
-#[getset(get = "pub(crate)")]
-pub(crate) struct SalusVal {
-    #[builder(into)]
-    nonce: [u8; 12],
-    #[builder(into)]
-    ciphertext: Vec<u8>,
-}
+pub(crate) mod values;
 
-impl Value for SalusVal {
-    type SelfType<'a>
-        = SalusVal
-    where
-        Self: 'a;
-
-    type AsBytes<'a>
-        = Vec<u8>
-    where
-        Self: 'a;
-
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        let nonce = data[0..12].try_into().expect("slice with incorrect length");
-        let ciphertext = data[12..].to_vec();
-        SalusVal { nonce, ciphertext }
-    }
-
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'b,
-    {
-        let mut bytes = Vec::with_capacity(12 + value.ciphertext.len());
-        bytes.extend_from_slice(&value.nonce);
-        bytes.extend_from_slice(&value.ciphertext);
-        bytes
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new("SalusVal")
-    }
-}
-
-pub(crate) const SALUS_CONFIG_TABLE_DEF: TableDefinition<'_, &str, bool> =
+pub(crate) const SALUS_CONFIG_TABLE_DEF: TableDefinition<'_, &str, ConfigVal> =
     TableDefinition::new("salus_config");
 
 pub(crate) const SALUS_VAL_TABLE_DEF: TableDefinition<'_, String, SalusVal> =
     TableDefinition::new("salus_store");
+pub(crate) const INITIALIZED_KEY: &str = "INITIALIZED";
+pub(crate) const NUM_SHARES_KEY: &str = "NUM_SHARES";
+pub(crate) const THRESHOLD_KEY: &str = "THRESHOLD";
+pub(crate) const CHECK_KEY_KEY: &str = "CHECK_KEY";
 
 pub(crate) fn initialize_redb<T: PathDefaults>(defaults: &T) -> Result<Arc<Mutex<Database>>> {
     let redb_path = database_absolute_path(defaults)?;

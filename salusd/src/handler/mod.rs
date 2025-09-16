@@ -8,161 +8,161 @@
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
-use aws_lc_rs::{
-    aead::{AES_256_GCM, Aad, RandomizedNonceKey},
-    rand,
-};
+use anyhow::{Error, Result};
 use bincode::{config::standard, encode_to_vec};
+use bon::Builder;
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Response, Shares, SsssConfig, Store, gen_shares};
-use redb::Database;
-use tokio::{io::AsyncWriteExt, sync::mpsc::UnboundedSender};
-use tracing::error;
-
-use crate::{
-    db::{
-        SALUS_CONFIG_TABLE_DEF, SALUS_VAL_TABLE_DEF, SalusVal, read_value, unlock_redb, write_value,
-    },
-    error::Error,
+use libsalus::{Action, Init, Response};
+use tokio::{
+    io::AsyncWriteExt,
+    spawn,
+    time::{Duration, sleep},
 };
+use tracing::warn;
 
-pub(crate) enum ShareStoreMessage {
-    AddShare(String),
-    Unlock,
-    ClearKey,
-    Init,
-    Store(Store),
+use crate::store::ShareStore;
+
+#[derive(Builder)]
+pub(crate) struct ActionHandler<T>
+where
+    T: SendHalf + Unpin,
+{
+    sender: T,
+    store: Arc<Mutex<ShareStore>>,
 }
 
-#[derive(Default)]
-pub(crate) struct ShareStore {
-    shares: Vec<String>,
-    key: Option<Vec<u8>>,
-}
-
-impl ShareStore {
-    pub(crate) fn clear_shares(&mut self) {
-        self.shares.clear();
-    }
-
-    pub(crate) fn clear_key(&mut self) {
-        self.key = None;
-    }
-
-    pub(crate) fn add_key(&mut self, key: Vec<u8>) {
-        self.key = Some(key);
-    }
-
-    pub(crate) fn add_share(&mut self, share: String) {
-        self.shares.push(share);
-    }
-
-    pub(crate) fn shares(&self) -> Vec<String> {
-        self.shares.clone()
-    }
-
-    pub(crate) fn key(&self) -> Option<Vec<u8>> {
-        self.key.clone()
-    }
-}
-
-pub(crate) async fn handler<T: SendHalf + Unpin>(
-    sender: &mut T,
-    message: Action,
-    stx: UnboundedSender<ShareStoreMessage>,
-    redb: Arc<Mutex<Database>>,
-) -> Result<()> {
-    match message {
-        Action::Genkey => {
-            let mut initialized = false;
-            unlock_redb(&redb, |db| -> Result<()> {
-                if let Ok(init_opt) =
-                    read_value::<&str, bool>(db, SALUS_CONFIG_TABLE_DEF, "INITIALIZED")
-                    && let Some(init) = init_opt
-                {
-                    initialized = init.value();
+impl<T> ActionHandler<T>
+where
+    T: SendHalf + Unpin,
+{
+    pub(crate) async fn action_handler(&mut self, message: Action) -> Result<()> {
+        match message {
+            Action::GenShares(num_shares, threshold) => {
+                let init = Init::builder()
+                    .num_shares(num_shares)
+                    .threshold(threshold)
+                    .build();
+                match self.initialize(init).await {
+                    Ok(()) => self.gen_key().await?,
+                    Err(e) => self.error(e).await?,
                 }
-                Ok(())
-            })?;
+            }
+            Action::Share(share) => self.add_share(share.share()).await?,
+            Action::Unlock => self.unlock().await?,
+            Action::Store(_store) => {
+                self.success().await?;
+            }
+            Action::Read(_key) => {}
+            Action::GetThreshold => self.get_threshold().await?,
+        }
+        Ok(())
+    }
 
-            if initialized {
-                response(sender, Response::AlreadyInitialiazed).await?;
-            } else {
-                let mut key = [0u8; 32];
-                rand::fill(&mut key)?;
-                if let Ok(shares) = gen_shares(&SsssConfig::default(), &key) {
-                    let key = RandomizedNonceKey::new(&AES_256_GCM, &key)
-                        .with_context(|| Error::NonceKeyGen)?;
-                    let mut check_key = b"CHECK_KEY".to_vec();
-                    let nonce = key.seal_in_place_append_tag(Aad::empty(), &mut check_key)?;
-                    unlock_redb(&redb, |db| -> Result<()> {
-                        let salus_val = SalusVal::builder()
-                            .nonce(*nonce.as_ref())
-                            .ciphertext(check_key.clone())
-                            .build();
-                        if let Err(e) = write_value::<String, SalusVal>(
-                            db,
-                            SALUS_VAL_TABLE_DEF,
-                            "CHECK_KEY".to_string(),
-                            salus_val,
-                        ) {
-                            error!("Error writing CHECK_KEY to database: {e}");
-                            return Err(e);
-                        }
-                        if let Err(e) = write_value::<&str, bool>(
-                            db,
-                            SALUS_CONFIG_TABLE_DEF,
-                            "INITIALIZED",
-                            true,
-                        ) {
-                            error!("Error writing INITIALIZED to database: {e}");
-                            return Err(e);
-                        }
-                        Ok(())
-                    })?;
-                    let shares_msg = Response::Shares(Shares::builder().shares(shares).build());
-                    response(sender, shares_msg).await?;
-                } else {
-                    error!("Error generating shares");
-                    error(sender).await?;
-                }
-                unlock_redb(&redb, |db| -> Result<()> {
-                    write_value::<&str, bool>(db, SALUS_CONFIG_TABLE_DEF, "INITIALIZED", true)
-                })?;
+    async fn initialize(&mut self, init: Init) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> { store.initialize(init) }) {
+            Ok(_response) => {
+                // self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
             }
         }
-        Action::Share(share) => {
-            stx.send(ShareStoreMessage::AddShare(share.share().to_string()))?;
-            success(sender).await?;
-        }
-        Action::Unlock => {
-            stx.send(ShareStoreMessage::Unlock)?;
-            success(sender).await?;
-        }
-        Action::Init(_init) => {
-            stx.send(ShareStoreMessage::Init)?;
-            success(sender).await?;
-        }
-        Action::Store(store) => {
-            stx.send(ShareStoreMessage::Store(store))?;
-            success(sender).await?;
-        }
+        Ok(())
     }
-    Ok(())
-}
 
-async fn response<T: SendHalf + Unpin>(sender: &mut T, message: Response) -> Result<()> {
-    let message = encode_to_vec(message, standard())?;
-    sender.write_all(&message).await?;
-    sender.flush().await?;
-    Ok(())
-}
+    async fn gen_key(&mut self) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> { store.gen_shares() }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
 
-async fn success<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
-    response(sender, Response::Success).await
-}
+    async fn add_share(&mut self, share: &str) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> {
+            store.add_share(share);
+            Ok(Response::Success)
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
 
-async fn error<T: SendHalf + Unpin>(sender: &mut T) -> Result<()> {
-    response(sender, Response::Error).await
+    async fn get_threshold(&mut self) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> {
+            let threshold = store.get_threshold();
+            Ok(Response::Threshold(threshold))
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn unlock(&mut self) -> Result<()> {
+        let store_c = self.store.clone();
+        match self.unlock_store(|store| -> Result<Response> {
+            let res = store.unlock();
+
+            if res.is_ok() {
+                // If we successfully unlocked the key, set a timer to clear it from memory after 20 seconds.
+                // This is a basic security measure to limit the time the key is in memory.
+                let interval = sleep(Duration::from_secs(20));
+                let store_c = store_c.clone();
+                let _blah = spawn(async move {
+                    interval.await;
+                    warn!("Clearing unlocked key from memory");
+                    store_c.lock().unwrap().clear_key();
+                });
+            }
+            res
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn response(&mut self, message: Response) -> Result<()> {
+        let message = encode_to_vec(message, standard())?;
+        self.sender.write_all(&message).await?;
+        self.sender.flush().await?;
+        Ok(())
+    }
+
+    async fn success(&mut self) -> Result<()> {
+        self.response(Response::Success).await
+    }
+
+    async fn error(&mut self, err: Error) -> Result<()> {
+        self.response(Response::Error(err.to_string())).await
+    }
+
+    fn unlock_store(
+        &mut self,
+        mut store_fn: impl FnMut(&mut ShareStore) -> Result<Response>,
+    ) -> Result<Response> {
+        let mut store = match self.store.lock() {
+            Ok(share_store) => share_store,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        store_fn(&mut store)
+    }
 }

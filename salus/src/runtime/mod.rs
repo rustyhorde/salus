@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::style::{Stylize, style};
-use libsalus::{Action, Init, Response, Share, Store};
+use libsalus::{Action, Response, Share, Store};
 use scanpw::scanpw;
 
 use crate::{
@@ -36,42 +36,46 @@ where
     let inter = Inter::builder().build();
 
     match cli.command() {
-        Commands::Init {
+        Commands::Shares {
             num_shares,
             threshold,
-        } => {
-            let init = Init::builder()
-                .num_shares(num_shares)
-                .threshold(threshold)
-                .build();
-            let message = Action::Init(init);
-            if let Response::Error = inter.send(message).await? {
-                eprintln!("Error occurred while initializing");
-            }
-        }
-        Commands::Genkey => match inter.send(Action::Genkey).await? {
+        } => match inter.send(Action::GenShares(num_shares, threshold)).await? {
             Response::Shares(shares) => {
-                println!(
-                    "{}",
-                    "These are your salus key shares.  Record them somewhere safe!  This will not be shown again.".green().bold(),
-                );
+                println!("{}", "These are your salus key shares.  Record them somewhere safe!  They will not be shown again.".green().bold());
                 println!();
                 for share in shares.shares() {
                     println!("{share}");
                 }
             }
             Response::AlreadyInitialiazed => {
-                println!("{}", "The share store is already initialized".red().bold());
+                println!(
+                    "{}",
+                    "The shares for this salus store have already been generated"
+                        .red()
+                        .bold()
+                );
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while generating shares: {error}");
             }
             _ => {
-                println!("Received unexpected response");
+                eprintln!("Unexpected response from salusd");
             }
         },
         Commands::Unlock => {
-            println!("{}", "Enter your 3 shares, one per prompt".green().bold());
+            let mut threshold = 3;
+            if let Response::Threshold(th) = inter.send(Action::GetThreshold).await? {
+                threshold = th;
+            }
+
+            let th_prompt = format!("Enter your {threshold} shares, one per prompt");
+            println!("{}", th_prompt.green().bold());
             println!();
-            for i in 0..3 {
-                let share_in = scanpw!("{}", style(format!("Enter share {}/3: ", i + 1)).green());
+            for i in 0..threshold {
+                let share_in = scanpw!(
+                    "{}",
+                    style(format!("Enter share {}/{threshold}: ", i + 1)).green()
+                );
                 let share = Share::builder().share(share_in).build();
                 let message = Action::Share(share);
                 let _unused = inter.send(message).await?;
@@ -80,8 +84,8 @@ where
         }
         Commands::Store { key, value } => {
             let message = Action::Store(Store::builder().key(key).value(value).build());
-            if let Response::Error = inter.send(message).await? {
-                eprintln!("Error occurred while storing value");
+            if let Response::Error(error) = inter.send(message).await? {
+                eprintln!("Error occurred while storing value: {error}");
             }
         }
     }
