@@ -48,6 +48,8 @@ pub(crate) struct ConfigSalusd {
     quiet: u8,
     #[getset(get_copy = "pub(crate)")]
     enable_std_output: bool,
+    #[getset(get_copy = "pub(crate)")]
+    key_timeout: u64,
     #[getset(get = "pub(crate)")]
     tracing: Tracing,
 }

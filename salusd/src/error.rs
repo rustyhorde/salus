@@ -30,6 +30,8 @@ pub(crate) enum Error {
     CheckKeyNotFound,
     #[error("Error generating shares")]
     ShareGeneration,
+    #[error("Store not unlocked")]
+    StoreNotUnlocked,
 }
 
 #[allow(clippy::needless_pass_by_value)]

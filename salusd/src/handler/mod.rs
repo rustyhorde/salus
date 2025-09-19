@@ -12,7 +12,7 @@ use anyhow::{Error, Result};
 use bincode::{config::standard, encode_to_vec};
 use bon::Builder;
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Init, Response};
+use libsalus::{Action, Init, Response, Store};
 use tokio::{
     io::AsyncWriteExt,
     spawn,
@@ -29,6 +29,8 @@ where
 {
     sender: T,
     store: Arc<Mutex<ShareStore>>,
+    #[builder(into, default = 20u64)]
+    key_timeout: u64,
 }
 
 impl<T> ActionHandler<T>
@@ -49,9 +51,7 @@ where
             }
             Action::Share(share) => self.add_share(share.share()).await?,
             Action::Unlock => self.unlock().await?,
-            Action::Store(_store) => {
-                self.success().await?;
-            }
+            Action::Store(store) => self.store(store).await?,
             Action::Read(_key) => {}
             Action::GetThreshold => self.get_threshold().await?,
         }
@@ -114,13 +114,14 @@ where
 
     async fn unlock(&mut self) -> Result<()> {
         let store_c = self.store.clone();
+        let key_timeout = self.key_timeout;
         match self.unlock_store(|store| -> Result<Response> {
             let res = store.unlock();
 
             if res.is_ok() {
-                // If we successfully unlocked the key, set a timer to clear it from memory after 20 seconds.
+                // If we successfully unlocked the key, set a timer to clear it from memory after `key_timeout` seconds.
                 // This is a basic security measure to limit the time the key is in memory.
-                let interval = sleep(Duration::from_secs(20));
+                let interval = sleep(Duration::from_secs(key_timeout));
                 let store_c = store_c.clone();
                 let _blah = spawn(async move {
                     interval.await;
@@ -140,15 +141,26 @@ where
         Ok(())
     }
 
+    async fn store(&mut self, value: Store) -> Result<()> {
+        let (key, value) = value.into_parts();
+        match self.unlock_store(|store| -> Result<Response> {
+            store.store(&key, value.as_bytes().to_vec())
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn response(&mut self, message: Response) -> Result<()> {
         let message = encode_to_vec(message, standard())?;
         self.sender.write_all(&message).await?;
         self.sender.flush().await?;
         Ok(())
-    }
-
-    async fn success(&mut self) -> Result<()> {
-        self.response(Response::Success).await
     }
 
     async fn error(&mut self, err: Error) -> Result<()> {

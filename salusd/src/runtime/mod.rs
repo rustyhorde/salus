@@ -113,10 +113,12 @@ where
         let (mut receiver, sender) = conn.split();
         let (tx, mut rx) = unbounded_channel::<Action>();
         let share_store_c = share_store.clone();
+        let kt = config.key_timeout();
         let _client_recv_handle = spawn(async move {
             let mut action_handler = ActionHandler::builder()
                 .sender(sender)
                 .store(share_store_c)
+                .key_timeout(kt)
                 .build();
             while let Some(message) = rx.recv().await {
                 if let Err(e) = action_handler.action_handler(message).await {
