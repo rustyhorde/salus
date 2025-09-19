@@ -73,6 +73,12 @@ impl Store {
     pub fn value(&self) -> &str {
         &self.value
     }
+
+    /// Get the key and value as a tuple
+    #[must_use]
+    pub fn into_parts(self) -> (String, String) {
+        (self.key, self.value)
+    }
 }
 
 /// A message to send to the daemon

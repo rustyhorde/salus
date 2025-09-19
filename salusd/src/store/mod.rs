@@ -212,38 +212,35 @@ impl ShareStore {
         Ok(Response::Success)
     }
 
-    //         ShareStoreMessage::Store(store_val) => {
-    //             let key_val = store_val.key();
-    //             let mut value = store_val.value().as_bytes().to_vec();
-
-    //             if let Some(key) = &self.key {
-    //                 let nonce_key = RandomizedNonceKey::new(&AES_256_GCM, key)
-    //                     .with_context(|| Error::NonceKeyGen)?;
-    //                 let nonce = nonce_key.seal_in_place_append_tag(Aad::empty(), &mut value)?;
-    //                 unlock_redb(&self.redb, |db| -> Result<()> {
-    //                     let salus_val = SalusVal::builder()
-    //                         .nonce(*nonce.as_ref())
-    //                         .ciphertext(value.clone())
-    //                         .build();
-    //                     match write_value::<String, SalusVal>(
-    //                         db,
-    //                         SALUS_VAL_TABLE_DEF,
-    //                         key_val.to_string(),
-    //                         salus_val,
-    //                     ) {
-    //                         Err(e) => {
-    //                             error!("Error writing value to database: {e}");
-    //                             return Err(e);
-    //                         }
-    //                         Ok(()) => {
-    //                             info!("Stored value under key: {key_val}");
-    //                         }
-    //                     }
-    //                     Ok(())
-    //                 })?;
-    //             } else {
-    //                 error!("No key available to store value");
-    //             }
-    //             Ok(Response::Success)
-    //         }
+    pub(crate) fn store(&self, key: &str, mut value: Vec<u8>) -> Result<Response> {
+        if let Some(enc_key) = &self.key {
+            let rnkey = RandomizedNonceKey::new(&AES_256_GCM, enc_key)
+                .with_context(|| Error::NonceKeyGen)?;
+            let nonce = rnkey.seal_in_place_append_tag(Aad::empty(), &mut value)?;
+            unlock_redb(&self.redb, |db| -> Result<()> {
+                let salus_val = SalusVal::builder()
+                    .nonce(*nonce.as_ref())
+                    .ciphertext(value.clone())
+                    .build();
+                match write_value::<String, SalusVal>(
+                    db,
+                    SALUS_VAL_TABLE_DEF,
+                    key.to_string(),
+                    salus_val,
+                ) {
+                    Err(e) => {
+                        error!("Error writing value to database: {e}");
+                        return Err(e);
+                    }
+                    Ok(()) => {
+                        info!("Stored value under key: {key}");
+                    }
+                }
+                Ok(())
+            })?;
+            Ok(Response::Success)
+        } else {
+            Err(Error::StoreNotUnlocked.into())
+        }
+    }
 }
