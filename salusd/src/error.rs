@@ -37,13 +37,13 @@ pub(crate) enum Error {
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn clap_or_error(err: anyhow::Error) -> i32 {
     let disp_err = || {
-        error!("{err:?}");
+        eprintln!("{err:?}");
         1
     };
     match err.downcast_ref::<clap::Error>() {
         Some(e) => match e.kind() {
             ErrorKind::DisplayHelp => {
-                error!("{e}");
+                eprintln!("{e}");
                 0
             }
             ErrorKind::DisplayVersion => 0,
@@ -63,7 +63,7 @@ pub(crate) fn clap_or_error(err: anyhow::Error) -> i32 {
             | ErrorKind::Io
             | ErrorKind::Format => disp_err(),
             _ => {
-                error!("Unknown ErrorKind");
+                eprintln!("Unknown ErrorKind");
                 disp_err()
             }
         },
