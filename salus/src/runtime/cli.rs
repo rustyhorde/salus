@@ -88,4 +88,9 @@ pub(crate) enum Commands {
         #[arg(short, long)]
         value: String,
     },
+    Read {
+        /// The key to read the value from
+        #[arg(short, long)]
+        key_opt: Option<String>,
+    },
 }

@@ -243,4 +243,46 @@ impl ShareStore {
             Err(Error::StoreNotUnlocked.into())
         }
     }
+
+    pub(crate) fn read(&self, key: &str) -> Result<Response> {
+        if let Some(enc_key) = &self.key {
+            let mut response = Response::KeyNotFound;
+            unlock_redb(&self.redb, |db| -> Result<()> {
+                match read_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, key.to_string()) {
+                    Err(e) => {
+                        error!("Error reading value from database: {e}");
+                        return Err(e);
+                    }
+                    Ok(None) => {
+                        info!("Key not found: {key}");
+                        response = Response::Value(None);
+                    }
+                    Ok(Some(svag)) => {
+                        let sv = svag.value();
+                        let nonce = Nonce::from(&sv.nonce());
+                        let rnkey = RandomizedNonceKey::new(&AES_256_GCM, enc_key)
+                            .with_context(|| Error::NonceKeyGen)?;
+                        let mut ciphertext = sv.ciphertext().clone();
+                        match rnkey.open_in_place(nonce, Aad::empty(), &mut ciphertext) {
+                            Err(e) => {
+                                error!("Error decrypting value: {e}");
+                                return Err(e.into());
+                            }
+                            Ok(plaintext_b) => {
+                                let plaintext = plaintext_b.to_vec();
+                                trace!("Read and decrypted value for key {key}: {:?}", plaintext);
+                                response = Response::Value(Some(
+                                    String::from_utf8_lossy(&plaintext).to_string(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+            Ok(response)
+        } else {
+            Err(Error::StoreNotUnlocked.into())
+        }
+    }
 }
