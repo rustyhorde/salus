@@ -52,7 +52,7 @@ where
             Action::Share(share) => self.add_share(share.share()).await?,
             Action::Unlock => self.unlock().await?,
             Action::Store(store) => self.store(store).await?,
-            Action::Read(_key) => {}
+            Action::Read(key) => self.read(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
         }
         Ok(())
@@ -146,6 +146,18 @@ where
         match self.unlock_store(|store| -> Result<Response> {
             store.store(&key, value.as_bytes().to_vec())
         }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn read(&mut self, key: String) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> { store.read(&key) }) {
             Ok(response) => {
                 self.response(response).await?;
             }

@@ -10,13 +10,13 @@ unstable = []
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bon = { workspace = true }
-clap = { version = "4.5.47", features = ["derive"] }
+clap = { workspace = true }
 config = { workspace = true }
 crossterm = "0.29.0"
 interprocess = { workspace = true }
 libsalus = { path = "../libsalus" }
 scanpw = "1.0.0"
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["io-std"] }
 tracing = { workspace = true }
 
 [build-dependencies]

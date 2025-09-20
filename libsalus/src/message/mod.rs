@@ -111,4 +111,8 @@ pub enum Response {
     AlreadyInitialiazed,
     /// The threshold
     Threshold(u8),
+    /// The value read from the store
+    Value(Option<String>),
+    /// The key was not found in the store
+    KeyNotFound,
 }
