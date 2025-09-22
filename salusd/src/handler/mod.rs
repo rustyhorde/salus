@@ -54,6 +54,7 @@ where
             Action::Store(store) => self.store(store).await?,
             Action::Read(key) => self.read(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
+            Action::FindKey(_key) => self.error(Error::msg("FindKey not implemented")).await?,
         }
         Ok(())
     }

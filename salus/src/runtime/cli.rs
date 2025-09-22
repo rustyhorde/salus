@@ -93,4 +93,9 @@ pub(crate) enum Commands {
         #[arg(short, long)]
         key_opt: Option<String>,
     },
+    Find {
+        /// The regex to find keys with
+        #[arg(index = 1)]
+        regex: String,
+    },
 }
