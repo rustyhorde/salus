@@ -96,6 +96,8 @@ pub enum Action {
     Read(String),
     /// Get the threshold
     GetThreshold,
+    /// Find a key
+    FindKey(String),
 }
 
 /// A response from the daemon
