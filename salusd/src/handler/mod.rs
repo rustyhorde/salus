@@ -54,7 +54,7 @@ where
             Action::Store(store) => self.store(store).await?,
             Action::Read(key) => self.read(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
-            Action::FindKey(_key) => self.error(Error::msg("FindKey not implemented")).await?,
+            Action::FindKey(key) => self.find(key).await?,
         }
         Ok(())
     }
@@ -167,6 +167,10 @@ where
             }
         }
         Ok(())
+    }
+
+    async fn find(&mut self, _regex: String) -> Result<()> {
+        self.error(Error::msg("Find not implemented")).await
     }
 
     async fn response(&mut self, message: Response) -> Result<()> {
