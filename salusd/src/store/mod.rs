@@ -15,7 +15,8 @@ use aws_lc_rs::{
 };
 use bon::Builder;
 use libsalus::{Init, Response, Shares, SsssConfig, gen_shares, unlock_key};
-use redb::Database;
+use redb::{Database, ReadableDatabase, ReadableTable};
+use regex::Regex;
 use tracing::{error, info, trace};
 
 use crate::{
@@ -284,5 +285,25 @@ impl ShareStore {
         } else {
             Err(Error::StoreNotUnlocked.into())
         }
+    }
+
+    pub(crate) fn find(&self, regex: &str) -> Result<Response> {
+        let mut matches = vec![];
+        trace!("Finding keys matching regex: {regex}");
+        let re = Regex::new(regex).with_context(|| Error::InvalidRegex)?;
+
+        unlock_redb(&self.redb, |db| -> Result<()> {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(SALUS_VAL_TABLE_DEF)?;
+            for iter_res in table.iter()? {
+                let (key_bytes, _) = iter_res.with_context(|| Error::TableIterRead)?;
+                let key_str = key_bytes.value();
+                if re.is_match(&key_str) {
+                    matches.push(key_str.clone());
+                }
+            }
+            Ok(())
+        })?;
+        Ok(Response::Matches(matches))
     }
 }

@@ -27,6 +27,7 @@ getset = { workspace = true }
 interprocess = { workspace = true }
 libsalus = { path = "../libsalus" }
 redb = "3.0.2"
+regex = "1.11.2"
 serde = { version = "1.0.226", features = ["derive"] }
 thiserror = "2.0.16"
 tokio = { workspace = true, features = ["time"] }

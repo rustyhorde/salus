@@ -152,6 +152,20 @@ impl Inter {
     pub(crate) async fn find(&self, regex: String) -> Result<()> {
         let message = Action::FindKey(regex.clone());
         match self.send(message).await? {
+            Response::Matches(matches) => {
+                if matches.is_empty() {
+                    let no_match_style = style(format!("No keys matched regex '{regex}'"))
+                        .red()
+                        .bold();
+                    println!("{no_match_style}");
+                } else {
+                    println!("{}", "Matching keys:".green().bold());
+                    for key in matches {
+                        let key_style = style(key).with(Color::Green).bold();
+                        println!("{key_style}");
+                    }
+                }
+            }
             Response::Error(error) => {
                 eprintln!("Error occurred while finding key: {error}");
             }
