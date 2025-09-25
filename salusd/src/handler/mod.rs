@@ -169,8 +169,16 @@ where
         Ok(())
     }
 
-    async fn find(&mut self, _regex: String) -> Result<()> {
-        self.error(Error::msg("Find not implemented")).await
+    async fn find(&mut self, regex: String) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> { store.find(&regex) }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn response(&mut self, message: Response) -> Result<()> {

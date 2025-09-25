@@ -117,4 +117,6 @@ pub enum Response {
     Value(Option<String>),
     /// The key was not found in the store
     KeyNotFound,
+    /// The keys that matched the regex
+    Matches(Vec<String>),
 }

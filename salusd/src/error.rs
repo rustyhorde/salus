@@ -32,6 +32,10 @@ pub(crate) enum Error {
     ShareGeneration,
     #[error("Store not unlocked")]
     StoreNotUnlocked,
+    #[error("Invalid regex")]
+    InvalidRegex,
+    #[error("Unable to read next item from table iterator")]
+    TableIterRead,
 }
 
 #[allow(clippy::needless_pass_by_value)]

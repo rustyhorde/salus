@@ -5,11 +5,11 @@ members = ["libsalus", "salus", "salusd"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
-aws-lc-rs = "1.14.0"
+aws-lc-rs = "1.14.1"
 bincode = "2.0.1"
 bon = "3.7.2"
 clap = { version = "4.5.48", features = ["derive"] }
-config = "0.15.16"
+config = "0.15.17"
 getset = "0.1.6"
 interprocess = { version = "2.2.3", features = ["async", "tokio"] }
 rustversion = "1.0.22"
