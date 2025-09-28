@@ -69,10 +69,9 @@ impl Source for Cli {
     }
 }
 
-#[derive(Clone, Copy, Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 pub(crate) enum Commands {
-    Genkey,
-    Init {
+    Shares {
         /// The number of shares to create
         #[arg(short, long, default_value = "5")]
         num_shares: u8,
@@ -81,4 +80,22 @@ pub(crate) enum Commands {
         threshold: u8,
     },
     Unlock,
+    Store {
+        /// The key to store the value under
+        #[arg(short, long)]
+        key: String,
+        /// The value to store
+        #[arg(short, long)]
+        value: String,
+    },
+    Read {
+        /// The key to read the value from
+        #[arg(short, long)]
+        key_opt: Option<String>,
+    },
+    Find {
+        /// The regex to find keys with
+        #[arg(index = 1)]
+        regex: String,
+    },
 }

@@ -8,12 +8,16 @@
 
 use bincode::{Decode, Encode};
 use bon::Builder;
+use getset::CopyGetters;
 
 /// The init message to send to the daemon
-#[derive(Builder, Clone, Copy, Debug, Decode, Encode)]
+#[derive(Builder, Clone, Copy, CopyGetters, Debug, Decode, Encode)]
+#[getset(get_copy = "pub")]
 pub struct Init {
+    /// The number of shares to create
     #[builder(default = 5)]
     num_shares: u8,
+    /// The minimum number of shares needed to reconstruct the key
     #[builder(default = 3)]
     threshold: u8,
 }
@@ -33,17 +37,86 @@ impl Share {
     }
 }
 
+/// A share message to send to the daemon
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct Shares {
+    #[builder(into)]
+    shares: Vec<String>,
+}
+
+impl Shares {
+    /// Get the shares
+    #[must_use]
+    pub fn shares(&self) -> &[String] {
+        &self.shares
+    }
+}
+
+/// A store message to send to the daemon
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct Store {
+    #[builder(into)]
+    key: String,
+    #[builder(into)]
+    value: String,
+}
+
+impl Store {
+    /// Get the key
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Get the value
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Get the key and value as a tuple
+    #[must_use]
+    pub fn into_parts(self) -> (String, String) {
+        (self.key, self.value)
+    }
+}
+
 /// A message to send to the daemon
 #[derive(Clone, Debug, Decode, Encode)]
-pub enum Message {
-    /// Init message
-    Init(Init),
-    /// Unlock message
+pub enum Action {
+    /// Attempt to unlock the store
     Unlock,
+    /// Send a share to the daemon
+    Share(Share),
+    /// Generate the salus shares
+    GenShares(u8, u8),
+    /// Store an encrypted value
+    Store(Store),
+    /// Read an encrypted value
+    Read(String),
+    /// Get the threshold
+    GetThreshold,
+    /// Find a key
+    FindKey(String),
+}
+
+/// A response from the daemon
+#[derive(Clone, Debug, Decode, Encode)]
+pub enum Response {
+    /// Error
+    Error(String),
     /// Success
     Success,
-    /// Error
-    Error,
-    /// Share
-    Share(Share),
+    /// Shares
+    Shares(Shares),
+    /// The share store is already initialized
+    AlreadyInitialiazed,
+    /// The threshold
+    Threshold(u8),
+    /// The value read from the store
+    Value(Option<String>),
+    /// The key was not found in the store
+    KeyNotFound,
+    /// The keys that matched the regex
+    Matches(Vec<String>),
 }

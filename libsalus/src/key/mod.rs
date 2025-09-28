@@ -7,8 +7,7 @@
 // modified, or distributed except according to those terms.
 
 use anyhow::Result;
-use aws_lc_rs::rand;
-use ssss::{SsssConfig, gen_shares, unlock};
+use ssss::{SsssConfig, unlock};
 use tracing::trace;
 
 /// Generate a new key and split it into shares using Shamir's Secret Sharing Scheme.
@@ -18,13 +17,9 @@ use tracing::trace;
 /// * If the random number generation fails, an error is returned.
 /// * If the share generation fails, an error is returned.
 ///
-pub fn gen_key(config: &SsssConfig) -> Result<Vec<String>> {
-    trace!("Generating new key");
-    let mut rand_bytes = [0u8; 256];
-    rand::fill(&mut rand_bytes)?;
-
+pub fn gen_shares(config: &SsssConfig, key: &[u8; 32]) -> Result<Vec<String>> {
     trace!("Generating shares from key");
-    gen_shares(config, &rand_bytes)
+    ssss::gen_shares(config, key)
 }
 
 /// Unlock the key from the given shares using Shamir's Secret Sharing Scheme.
@@ -40,25 +35,34 @@ pub fn unlock_key(shares: &[String]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod test {
     use anyhow::Result;
+    use aws_lc_rs::rand::fill;
     use rand::rng;
     use ssss::{SsssConfig, remove_random_entry};
 
-    use super::{gen_key, unlock_key};
+    use super::{gen_shares, unlock_key};
+
+    fn gen_key() -> Result<[u8; 32]> {
+        let mut key = [0u8; 32];
+        fill(&mut key)?;
+        Ok(key)
+    }
 
     #[test]
     fn gen_key_works() -> Result<()> {
-        let shares = gen_key(&SsssConfig::default())?;
+        let key = gen_key()?;
+        let shares = gen_shares(&SsssConfig::default(), &key)?;
         assert_eq!(shares.len(), 5);
         Ok(())
     }
 
     #[test]
     fn unlock_key_works() -> Result<()> {
-        let mut shares = gen_key(&SsssConfig::default())?;
+        let key = gen_key()?;
+        let mut shares = gen_shares(&SsssConfig::default(), &key)?;
         assert_eq!(shares.len(), 5);
 
         let unlocked = unlock_key(&shares)?;
-        assert_eq!(unlocked.len(), 256);
+        assert_eq!(unlocked.len(), 32);
 
         // Remove a random share from `shares` and check that 4 shares can unlock
         // the secret
