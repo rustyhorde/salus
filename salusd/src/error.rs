@@ -7,7 +7,6 @@
 // modified, or distributed except according to those terms.
 
 use clap::error::ErrorKind;
-use tracing::error;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum Error {

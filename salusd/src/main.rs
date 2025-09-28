@@ -221,7 +221,6 @@
 )]
 // clippy lints
 #![cfg_attr(nightly, deny(clippy::all, clippy::pedantic))]
-#![allow(clippy::ref_option)]
 // rustdoc lints
 #![cfg_attr(
     nightly,
@@ -239,9 +238,7 @@
     all(nightly, feature = "unstable"),
     deny(rustdoc::missing_doc_code_examples)
 )]
-#![cfg_attr(all(doc, nightly), feature(doc_auto_cfg))]
 #![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
-#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 use std::process;
 
