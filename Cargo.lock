@@ -1596,9 +1596,9 @@ dependencies = [
 
 [[package]]
 name = "ssss"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e2df3059527cd9e4d9ad525ded960a59105faa2f5252d218722075483711b2e"
+checksum = "193be117bf0ecebab1a073905485c42a58a821014b418f880a0bf2f1574c4311"
 dependencies = [
  "anyhow",
  "bon",
@@ -1841,9 +1841,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber-init"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20b5bb9062390c3f3626a8ab90b14a384bce2c5b7281d166d4d295a6c281732e"
+checksum = "c5738faaf85e4548d3575f2763d8a84f4554ca9034206b38c2f88dbc2452cf86"
 dependencies = [
  "anyhow",
  "rustversion",

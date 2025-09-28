@@ -21,7 +21,7 @@ bincode = { workspace = true }
 bon = { workspace = true }
 getset = { workspace = true }
 interprocess = { workspace = true }
-ssss = "1.0.2"
+ssss = "1.0.3"
 tracing = { workspace = true }
 
 [build-dependencies]
