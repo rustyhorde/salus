@@ -1594,9 +1594,9 @@ dependencies = [
 
 [[package]]
 name = "ssss"
-version = "1.0.3"
+version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "193be117bf0ecebab1a073905485c42a58a821014b418f880a0bf2f1574c4311"
+checksum = "a211e39facdcc50db447ad44301213e95ef8217b5e6c799d3051d6e7593229c2"
 dependencies = [
  "anyhow",
  "bon",
