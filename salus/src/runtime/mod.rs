@@ -10,9 +10,6 @@ use std::ffi::OsString;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::style::{Stylize, style};
-use libsalus::{Init, Message, Share, SsssConfig, gen_key};
-use scanpw::scanpw;
 
 use crate::{
     inter::Inter,
@@ -36,38 +33,14 @@ where
     let inter = Inter::builder().build();
 
     match cli.command() {
-        Commands::Init {
+        Commands::Shares {
             num_shares,
             threshold,
-        } => {
-            let init = Init::builder()
-                .num_shares(num_shares)
-                .threshold(threshold)
-                .build();
-            let message = Message::Init(init);
-            inter.send(message).await?;
-        }
-        Commands::Genkey => {
-            let shares = gen_key(&SsssConfig::default())?;
-            println!(
-                "These are your salus key shares.  Record them somewhere safe!  This will not be shown again."
-            );
-            println!();
-            for share in shares {
-                println!("{share}");
-            }
-        }
-        Commands::Unlock => {
-            println!("{}", "Enter your 3 shares, one per prompt".green().bold());
-            println!();
-            for i in 0..3 {
-                let share_in = scanpw!("{}", style(format!("Enter share {}/3: ", i + 1)).green());
-                let share = Share::builder().share(share_in).build();
-                let message = Message::Share(share);
-                inter.send(message).await?;
-            }
-            inter.send(Message::Unlock).await?;
-        }
+        } => inter.shares(num_shares, threshold).await?,
+        Commands::Unlock => inter.unlock().await?,
+        Commands::Store { key, value } => inter.store(key, value).await?,
+        Commands::Read { key_opt } => inter.read(key_opt).await?,
+        Commands::Find { regex } => inter.find(regex).await?,
     }
 
     Ok(())

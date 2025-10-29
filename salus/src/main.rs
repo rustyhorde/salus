@@ -124,7 +124,7 @@
         refining_impl_trait_internal,
         refining_impl_trait_reachable,
         renamed_and_removed_lints,
-        repr_transparent_external_private_fields,
+        repr_transparent_non_zst_fields,
         rust_2021_incompatible_closure_captures,
         rust_2021_incompatible_or_patterns,
         rust_2021_prefixes_incompatible_syntax,
@@ -238,9 +238,7 @@
     all(nightly, feature = "unstable"),
     deny(rustdoc::missing_doc_code_examples)
 )]
-#![cfg_attr(all(doc, nightly), feature(doc_auto_cfg))]
 #![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
-#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 use crate::error::{clap_or_error, success};
 use anyhow::Result;
