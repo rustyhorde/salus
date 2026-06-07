@@ -7,7 +7,7 @@
 // modified, or distributed except according to those terms.
 
 use anyhow::Result;
-use bincode::{
+use bincode_next::{
     Decode, Encode, config::standard, decode_from_slice, encode_into_slice, encode_to_vec,
 };
 use bon::Builder;

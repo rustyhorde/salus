@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Error, Result};
-use bincode::{config::standard, encode_to_vec};
+use bincode_next::{config::standard, encode_to_vec};
 use bon::Builder;
 use interprocess::local_socket::traits::tokio::SendHalf;
 use libsalus::{Action, Init, Response, Store};

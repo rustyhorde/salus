@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use bincode::{config::standard, decode_from_slice};
+use bincode_next::{config::standard, decode_from_slice};
 use clap::Parser;
 use interprocess::local_socket::{
     ListenerOptions,

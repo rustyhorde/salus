@@ -6,7 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use bincode::{Decode, Encode};
+use bincode_next::{Decode, Encode};
 use bon::Builder;
 use getset::CopyGetters;
 

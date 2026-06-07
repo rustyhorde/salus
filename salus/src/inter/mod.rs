@@ -7,7 +7,7 @@
 // modified, or distributed except according to those terms.
 
 use anyhow::Result;
-use bincode::{config::standard, decode_from_slice, encode_to_vec};
+use bincode_next::{config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
 use crossterm::style::{Color, Stylize, style};
 use interprocess::local_socket::{tokio::Stream, traits::tokio::Stream as _};
