@@ -29,6 +29,7 @@ fuzzing = []
 
 [[package.metadata.cargo-matrix.channel]]
 name = "default"
+always_deny = ["fuzzing"]
 
 [[package.metadata.cargo-matrix.channel]]
 name = "linux"

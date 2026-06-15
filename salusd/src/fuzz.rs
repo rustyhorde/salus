@@ -35,6 +35,7 @@ const SEED_KEYS: &[&str] = &[
 
 /// Build an in-memory `ShareStore` that has been initialized (shares generated
 /// and the `CHECK_KEY` sentinel written) but is **not** yet unlocked.
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn build_initialized_store() -> Result<(ShareStore, Vec<String>)> {
     let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
     let mut store = ShareStore::builder().redb(Arc::new(Mutex::new(db))).build();
@@ -47,6 +48,7 @@ fn build_initialized_store() -> Result<(ShareStore, Vec<String>)> {
 
 /// Build an in-memory `ShareStore` and unlock it with the default threshold of
 /// three shares, seeding a handful of keys for the `find` path.
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn build_unlocked_store() -> Result<ShareStore> {
     let (mut store, shares) = build_initialized_store()?;
     for share in shares.iter().take(3) {
@@ -77,6 +79,7 @@ thread_local! {
 /// # Errors
 ///
 /// Returns an error if the underlying seal, database, or open operation fails.
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn store_roundtrip(key: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
     STORE.with(|store| {
         let _stored = store.store(key, value.to_vec())?;
@@ -96,6 +99,7 @@ pub fn store_roundtrip(key: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
 ///
 /// Returns an error if `pattern` is not a valid regular expression or the
 /// database iteration fails.
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn find_regex(pattern: &str) -> Result<Vec<String>> {
     STORE.with(|store| match store.find(pattern)? {
         Response::Matches(matches) => Ok(matches),

@@ -230,6 +230,7 @@
     )
 )]
 #![cfg_attr(all(docsrs), feature(doc_cfg))]
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 use crate::error::{clap_or_error, success};
 
