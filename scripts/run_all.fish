@@ -11,6 +11,7 @@
 set run_tests true
 set run_coverage true
 set run_docs true
+set run_fuzz true
 set run_clean false
 
 for arg in $argv
@@ -24,6 +25,7 @@ for arg in $argv
             echo "  --no-test      Skip nextest and all coverage steps"
             echo "  --no-coverage  Skip coverage steps only (lcov + html reports)"
             echo "  --no-docs      Skip the documentation step"
+            echo "  --no-fuzz      Skip the cargo fuzz steps"
             echo "  --clean        Run cargo clean after all steps complete"
             echo "  --help, -h     Show this help message"
             echo ""
@@ -33,11 +35,14 @@ for arg in $argv
             echo "  3.  cargo matrix clippy --all-targets -- -Dwarnings"
             echo "  4.  cargo matrix build"
             echo "  5.  cargo matrix nextest run                        (skipped with --no-test)"
-            echo "  6.  cargo doc -p libsalus                           (skipped with --no-docs)"
-            echo "  7.  cargo matrix -F unstable llvm-cov nextest ...   (skipped with --no-test or --no-coverage)"
-            echo "  8.  cargo llvm-cov report --lcov ...                (skipped with --no-test or --no-coverage)"
-            echo "  9.  cargo llvm-cov report --html                    (skipped with --no-test or --no-coverage)"
-            echo "  10. cargo clean                                     (only with --clean)"
+            echo "  6.  cargo test -p libsalus --doc                    (skipped with --no-test)"
+            echo "  7.  cargo test --manifest-path fuzz/Cargo.toml      (skipped with --no-test)"
+            echo "  8.  cargo doc -p libsalus                           (skipped with --no-docs)"
+            echo "  9.  cargo matrix -F unstable llvm-cov nextest ...   (skipped with --no-test or --no-coverage)"
+            echo "  10. cargo llvm-cov report --lcov ...                (skipped with --no-test or --no-coverage)"
+            echo "  11. cargo llvm-cov report --html                    (skipped with --no-test or --no-coverage)"
+            echo "  12. cargo fuzz run (30s each target)               (skipped with --no-fuzz)"
+            echo "  13. cargo clean                                     (only with --clean)"
             exit 0
         case --no-test
             set run_tests false
@@ -46,6 +51,8 @@ for arg in $argv
             set run_coverage false
         case --no-docs
             set run_docs false
+        case --no-fuzz
+            set run_fuzz false
         case --clean
             set run_clean true
         case '*'
@@ -73,6 +80,7 @@ run_step cargo matrix build
 if test $run_tests = true
     run_step cargo matrix nextest run
     run_step cargo test -p libsalus --doc
+    run_step cargo test --manifest-path fuzz/Cargo.toml
 end
 
 if test $run_docs = true
@@ -83,6 +91,14 @@ if test $run_coverage = true
     run_step cargo matrix -F unstable llvm-cov nextest --no-report
     run_step cargo llvm-cov report --lcov --output-path lcov.info
     run_step cargo llvm-cov report --html
+end
+
+if test $run_fuzz = true
+    run_step cargo +nightly fuzz run fuzz_action_decode -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_response_decode -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_unlock_key -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_store_roundtrip -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_find_regex -- -max_total_time=30
 end
 
 if test $run_clean = true

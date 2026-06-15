@@ -229,7 +229,7 @@
         rustdoc::private_intra_doc_links,
     )
 )]
-#![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
+#![cfg_attr(all(docsrs), feature(doc_cfg))]
 
 use anyhow::Result;
 use interprocess::local_socket::GenericFilePath;
@@ -243,10 +243,13 @@ pub use crate::key::gen_shares;
 pub use crate::key::unlock_key;
 pub use crate::message::Action;
 pub use crate::message::Init;
+pub use crate::message::MAX_MESSAGE_SIZE;
 pub use crate::message::Response;
 pub use crate::message::Share;
 pub use crate::message::Shares;
 pub use crate::message::Store;
+pub use crate::message::decode;
+pub use crate::message::encode;
 use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::NameType;
 use interprocess::local_socket::ToNsName;

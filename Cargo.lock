@@ -1259,7 +1259,6 @@ name = "salus"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode-next",
  "bon",
  "clap",
  "config",

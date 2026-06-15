@@ -7,11 +7,10 @@
 // modified, or distributed except according to those terms.
 
 use anyhow::Result;
-use bincode_next::{config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
 use crossterm::style::{Color, Stylize, style};
 use interprocess::local_socket::{tokio::Stream, traits::tokio::Stream as _};
-use libsalus::{Action, Response, Share, Store, socket_name};
+use libsalus::{Action, Response, Share, Store, decode, encode, socket_name};
 use scanpw::scanpw;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -38,7 +37,7 @@ impl Inter {
         // Describe the send operation as writing our whole string.
         let _handle = tokio::spawn(async move {
             let blah = async || -> Result<()> {
-                let message = encode_to_vec(message, standard())?;
+                let message = encode(message)?;
                 sender.write_all(&message).await?;
                 sender.flush().await?;
                 Ok(())
@@ -52,13 +51,7 @@ impl Inter {
         // Describe the receive operation as receiving until a newline into our buffer.
         let mut msg_buf = Vec::new();
         let _msg_size = recver.read_to_end(&mut msg_buf).await?;
-        let dec_res: Result<(Response, usize)> =
-            decode_from_slice(&msg_buf, standard()).map_err(Into::into);
-
-        match dec_res {
-            Ok((msg, _size)) => Ok(msg),
-            Err(e) => Err(e),
-        }
+        decode::<Response>(&msg_buf)
     }
 
     pub(crate) async fn shares(&self, num_shares: u8, threshold: u8) -> Result<()> {

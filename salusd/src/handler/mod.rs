@@ -9,10 +9,9 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Error, Result};
-use bincode_next::{config::standard, encode_to_vec};
 use bon::Builder;
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Init, Response, Store};
+use libsalus::{Action, Init, Response, Store, encode};
 use tokio::{
     io::AsyncWriteExt,
     spawn,
@@ -189,7 +188,7 @@ where
     }
 
     async fn response(&mut self, message: Response) -> Result<()> {
-        let message = encode_to_vec(message, standard())?;
+        let message = encode(message)?;
         self.sender.write_all(&message).await?;
         self.sender.flush().await?;
         Ok(())

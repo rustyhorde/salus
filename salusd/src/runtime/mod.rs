@@ -13,13 +13,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use bincode_next::{config::standard, decode_from_slice};
 use clap::Parser;
 use interprocess::local_socket::{
     ListenerOptions,
     traits::tokio::{Listener, RecvHalf, Stream as _},
 };
-use libsalus::{Action, socket_name};
+use libsalus::{Action, decode, socket_name};
 use tokio::{
     io::AsyncReadExt,
     spawn,
@@ -143,9 +142,9 @@ async fn handle_conn<T: RecvHalf + Unpin>(
     let mut msg_buf = Vec::new();
     let _msg_size = receiver.read_to_end(&mut msg_buf).await?;
 
-    let decoded_res: Result<(Action, usize)> =
-        decode_from_slice(&msg_buf, standard()).map_err(Into::into);
-    if let Ok((message, _)) = decoded_res {
+    // A forged length prefix cannot trigger an unbounded allocation here:
+    // `decode` enforces `MAX_MESSAGE_SIZE`. Malformed input is silently dropped.
+    if let Ok(message) = decode::<Action>(&msg_buf) {
         txc.send(message)?;
     }
 

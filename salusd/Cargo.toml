@@ -13,8 +13,19 @@ repository = "https://github.com/rustyhorde/salus"
 rust-version = "1.91.1"
 version = "0.1.0"
 
+[lib]
+name = "salusd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "salusd"
+path = "src/main.rs"
+
 [features]
 unstable = []
+# Exposes the crate-private storage/crypto paths through `salusd::fuzz` for the
+# workspace fuzz crate. Not intended for production use.
+fuzzing = []
 
 [[package.metadata.cargo-matrix.channel]]
 name = "default"

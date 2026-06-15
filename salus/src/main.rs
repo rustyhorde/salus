@@ -229,7 +229,7 @@
         rustdoc::private_intra_doc_links,
     )
 )]
-#![cfg_attr(all(docsrs, nightly), feature(doc_cfg))]
+#![cfg_attr(all(docsrs), feature(doc_cfg))]
 
 use crate::error::{clap_or_error, success};
 use anyhow::Result;

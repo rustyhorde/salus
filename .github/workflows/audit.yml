@@ -43,3 +43,84 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           deny: warnings
           create_issue: ${{ github.event_name != 'pull_request' }}
+
+  audit-fuzz:
+    name: 💣 Audit Fuzz 💣
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: ✅ Checkout ✅
+        uses: Wandalen/wretry.action@71a909ebf09f3ffdc6f42a17bd54ecb43481da49 # v3.8.0
+        with:
+          action: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          attempt_limit: 3
+          attempt_delay: 30000
+
+      - name: 🦀 Install stable Rust 🦀
+        # master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+
+      - name: 📦 Install cargo-audit 📦
+        run: cargo install cargo-audit
+
+      # The fuzz crate is excluded from the workspace, so it carries its own
+      # Cargo.lock that the workspace audit above never sees. Audit it here.
+      - name: 💣 Audit fuzz dependencies 💣
+        run: cargo audit --deny warnings --file fuzz/Cargo.lock
+
+  fuzz-smoke:
+    name: 🧪 Fuzz Smoke Test 🧪
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: ✅ Checkout ✅
+        uses: Wandalen/wretry.action@71a909ebf09f3ffdc6f42a17bd54ecb43481da49 # v3.8.0
+        with:
+          action: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          attempt_limit: 3
+          attempt_delay: 30000
+
+      - name: 🦀 Install nightly Rust 🦀
+        # master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: nightly
+
+      - name: 📦 Install cargo-fuzz 📦
+        run: cargo install cargo-fuzz
+
+      - name: 🧪 Replay fuzz regression corpus 🧪
+        run: cargo test --manifest-path fuzz/Cargo.toml
+
+      - name: 🧪 Fuzz fuzz_action_decode (30 s) 🧪
+        run: cargo +nightly fuzz run fuzz_action_decode -- -max_total_time=30
+
+      - name: 🧪 Fuzz fuzz_response_decode (30 s) 🧪
+        run: cargo +nightly fuzz run fuzz_response_decode -- -max_total_time=30
+
+      - name: 🧪 Fuzz fuzz_unlock_key (30 s) 🧪
+        run: cargo +nightly fuzz run fuzz_unlock_key -- -max_total_time=30
+
+      - name: 🧪 Fuzz fuzz_store_roundtrip (30 s) 🧪
+        run: cargo +nightly fuzz run fuzz_store_roundtrip -- -max_total_time=30
+
+      - name: 🧪 Fuzz fuzz_find_regex (30 s) 🧪
+        run: cargo +nightly fuzz run fuzz_find_regex -- -max_total_time=30
+
+      - name: 💾 Upload crash artifacts (if any) 💾
+        if: failure()
+        # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fuzz-crashes-${{ github.run_id }}
+          path: |
+            fuzz/artifacts/fuzz_action_decode/
+            fuzz/artifacts/fuzz_response_decode/
+            fuzz/artifacts/fuzz_unlock_key/
+            fuzz/artifacts/fuzz_store_roundtrip/
+            fuzz/artifacts/fuzz_find_regex/
+          if-no-files-found: ignore

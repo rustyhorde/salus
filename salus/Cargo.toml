@@ -27,7 +27,6 @@ name = "macos"
 
 [dependencies]
 anyhow = { workspace = true }
-bincode-next = { workspace = true }
 bon = { workspace = true }
 clap = { workspace = true }
 config = { workspace = true }
