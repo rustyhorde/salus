@@ -7,7 +7,7 @@ members = ["libsalus", "salusc", "salusd"]
 anyhow = "1.0.102"
 aws-lc-rs = "1.17.0"
 bincode-next = "3.0.0-rc.15"
-bon = "3.9.2"
+bon = "3.9.3"
 clap = { version = "4.6.1", features = ["derive"] }
 config = "0.15.23"
 dirs2 = "3.0.1"

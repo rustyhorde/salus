@@ -14,10 +14,10 @@ A key/value store protected by secret shares and encryption
 [![Crates.io](https://img.shields.io/crates/l/salusd.svg)](https://crates.io/crates/salusd)
 [![Crates.io](https://img.shields.io/crates/d/salusd.svg)](https://crates.io/crates/salusd)
 
-### salus
-[![Crates.io](https://img.shields.io/crates/v/salus.svg)](https://crates.io/crates/salus)
-[![Crates.io](https://img.shields.io/crates/l/salus.svg)](https://crates.io/crates/salus)
-[![Crates.io](https://img.shields.io/crates/d/salus.svg)](https://crates.io/crates/salus)
+### salusc
+[![Crates.io](https://img.shields.io/crates/v/salusc.svg)](https://crates.io/crates/salusc)
+[![Crates.io](https://img.shields.io/crates/l/salusc.svg)](https://crates.io/crates/salusc)
+[![Crates.io](https://img.shields.io/crates/d/salusc.svg)](https://crates.io/crates/salusc)
 
 ### CI/CD
 [![docs.rs](https://docs.rs/libsalus/badge.svg)](https://docs.rs/libsalus)
@@ -87,6 +87,60 @@ cargo clippy --all-targets   # lints (see note below)
 The daemon must be unlocked before `store`/`read` succeed (otherwise
 `StoreNotUnlocked`). The reconstructed key auto-clears after `key_timeout`
 seconds (default 20), after which you must `unlock` again.
+
+### Local testing (debug builds)
+
+To exercise debug builds from the project directory **without disturbing a
+production install** on the same machine, keep all state under the tracked
+`dev/` directory and redirect every path with CLI flags.
+
+Two things must be isolated:
+
+- **The socket.** On Linux the default IPC socket is an *abstract-namespace*
+  name (`salus.sock`) that every install shares — a debug daemon would try to
+  bind the same name as a running production daemon. Pointing the socket at a
+  **file path** (any explicit `--socket-path` / `SALUS_SOCKET` value) switches to
+  a filesystem socket, so the dev pair gets its own socket while production keeps
+  using the abstract name. Use a path inside `dev/`.
+- **The database (and config/log).** The database, config-file, and tracing
+  paths are **CLI-only** (`-d` / `-c` / `-t`); they are *not* read from env or
+  the TOML file. Without `-d`, a debug daemon reads and writes the **production**
+  database under `~/.local/share/salusd/`. Always pass `-d` (and `-c`/`-t`) so it
+  stays in `dev/`.
+
+The repo ships base config (`dev/salusd.toml`, `dev/salusc.toml`) and a fish
+helper that wires these flags up. Source it once per shell:
+
+```bash
+source scripts/dev_env.fish      # defines salusd-dev / salusc-dev
+
+salusd-dev                       # terminal 1: foreground debug daemon
+salusc-dev shares                # terminal 2: first-time init — record the shares
+salusc-dev unlock                # enter `threshold` shares (default 3)
+salusc-dev store -k mykey -v myvalue
+salusc-dev read  -k mykey
+salusc-dev find '^my'
+```
+
+The wrappers are thin — the equivalent raw commands (for non-fish shells, run
+from the repo root) are:
+
+```bash
+# daemon
+cargo run -p salusd -- -e \
+    -c dev/salusd.toml -d dev/salusd.redb -t dev/salusd.log -s dev/salus.sock
+
+# client (repeat per command)
+cargo run -p salusc -- -c dev/salusc.toml -s dev/salus.sock shares
+```
+
+Only `dev/salusd.toml`, `dev/salusc.toml`, and `dev/.gitignore` are tracked; the
+runtime artifacts (`dev/salusd.redb`, `dev/salusd.log`, `dev/salus.sock`) are
+gitignored. The dev config sets a longer `key_timeout` (300s) so the in-memory
+key does not clear out from under you during manual testing.
+
+> **Stale socket.** If the daemon ever fails to start with an "address in use"
+> error after a crash, remove the leftover file socket: `rm -f dev/salus.sock`.
 
 ## Usage
 
