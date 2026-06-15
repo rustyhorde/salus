@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 
-members = ["libsalus", "salus", "salusd"]
+members = ["libsalus", "salusc", "salusd"]
 
 [workspace.dependencies]
 anyhow = "1.0.102"

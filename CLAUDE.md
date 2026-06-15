@@ -8,7 +8,7 @@ Salus is a local secret store: a key/value store where the master encryption key
 
 - **`libsalus`** — shared library. Shamir share generation/unlocking (wraps the `ssss` crate), the wire protocol (`Action`/`Response` enums plus message structs), and `socket_name()`, the single source of truth for the IPC socket path. Both binaries depend on this so the protocol stays in sync.
 - **`salusd`** — the daemon. Listens on the socket, owns the `redb` database, does all AES-256-GCM encryption, and is the only crate that touches crypto-at-rest and storage.
-- **`salus`** — the CLI client. Parses subcommands, connects to the socket, sends `Action`s, and renders `Response`s with `crossterm` styling. Holds no key material and does no crypto.
+- **`salusc`** — the CLI client. Parses subcommands, connects to the socket, sends `Action`s, and renders `Response`s with `crossterm` styling. Holds no key material and does no crypto.
 
 ## Commands
 
@@ -20,7 +20,7 @@ cargo test -p libsalus           # test a single crate
 cargo test gen_key_works         # run a single test by name
 cargo clippy --all-targets       # lints — see lint note below
 cargo run -p salusd              # run the daemon (foreground)
-cargo run -p salus -- shares     # run the client; args after `--`
+cargo run -p salusc -- shares    # run the client; args after `--`
 ```
 
 **Final verification.** Always run `scripts/run_all.fish --no-fuzz` as the final verification step before considering a change complete.
@@ -29,15 +29,15 @@ cargo run -p salus -- shares     # run the client; args after `--`
 
 1. Start the daemon: `cargo run -p salusd -- -e -v` (`-e` enables stdout logging — only for foreground/dev, not as a service; `-v` raises verbosity).
 2. In another terminal, drive it with the client:
-   - `salus shares` — first-time init; generates and prints the shares **once** (record them).
-   - `salus unlock` — prompts for `threshold` shares (default 3) and reconstructs the key in the daemon's memory. The key auto-clears after `key_timeout` seconds (default 20), after which you must unlock again.
-   - `salus store -k <key> -v <value>` / `salus read -k <key>` / `salus find <regex>`.
+   - `salusc shares` — first-time init; generates and prints the shares **once** (record them).
+   - `salusc unlock` — prompts for `threshold` shares (default 3) and reconstructs the key in the daemon's memory. The key auto-clears after `key_timeout` seconds (default 20), after which you must unlock again.
+   - `salusc store -k <key> -v <value>` / `salusc read -k <key>` / `salusc find <regex>`.
 
 The daemon must be unlocked before `store`/`read` succeed (otherwise `StoreNotUnlocked`).
 
 ## Architecture details worth knowing
 
-**Wire protocol.** Client and daemon exchange `libsalus::Action` / `Response` enums serialized with `bincode-next` (`standard()` config). Each request is a fresh socket connection: the client writes one encoded `Action`, half-closes the send side, and reads the `Response` to EOF (`read_to_end`). Adding an operation means: add an `Action` (and usually a `Response`) variant in `libsalus/src/message/mod.rs`, a client method in `salus/src/inter/mod.rs`, a CLI subcommand in `salus/src/runtime/cli.rs`, and a handler arm in `salusd`'s `ActionHandler::action_handler` that calls into `ShareStore`.
+**Wire protocol.** Client and daemon exchange `libsalus::Action` / `Response` enums serialized with `bincode-next` (`standard()` config). Each request is a fresh socket connection: the client writes one encoded `Action`, half-closes the send side, and reads the `Response` to EOF (`read_to_end`). Adding an operation means: add an `Action` (and usually a `Response`) variant in `libsalus/src/message/mod.rs`, a client method in `salusc/src/inter/mod.rs`, a CLI subcommand in `salusc/src/runtime/cli.rs`, and a handler arm in `salusd`'s `ActionHandler::action_handler` that calls into `ShareStore`.
 
 **Daemon concurrency.** `salusd/src/runtime/mod.rs` accepts connections in a loop. Per connection it spawns two tasks: one decodes the incoming `Action` and forwards it over an mpsc channel, the other (an `ActionHandler`) consumes the channel and mutates the shared `ShareStore`. The store is an `Arc<Mutex<ShareStore>>` shared across all connections. Mutex poisoning is deliberately recovered via `into_inner()` (see `unlock_store` / `unlock_redb`) rather than panicking.
 

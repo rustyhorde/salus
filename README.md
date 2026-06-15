@@ -30,7 +30,7 @@ Salus is a local secret store. It is a key/value store whose master encryption
 key is split into [Shamir secret shares][shamir] and **never persisted to disk**.
 
 A long-running daemon (`salusd`) owns the encrypted database and holds the
-reconstructed key only in memory. A command line client (`salus`) talks to it
+reconstructed key only in memory. A command line client (`salusc`) talks to it
 over a local IPC socket; the client holds no key material and performs no crypto.
 
 The project is three workspace crates:
@@ -41,7 +41,7 @@ The project is three workspace crates:
 - **`salusd`** — the daemon: listens on the socket, owns the [`redb`][redb]
   database, and does all AES-256-GCM encryption. The only crate that touches
   crypto-at-rest and storage.
-- **`salus`** — the CLI client: parses subcommands, connects to the socket, sends
+- **`salusc`** — the CLI client: parses subcommands, connects to the socket, sends
   `Action`s, and renders `Response`s with [`crossterm`][crossterm] styling.
 
 Built with **edition 2024**, MSRV **1.91.1**, and dual-licensed
@@ -77,11 +77,11 @@ cargo clippy --all-targets   # lints (see note below)
 2. In another terminal, drive it with the client:
 
    ```bash
-   salus shares                       # first-time init; prints the shares ONCE — record them
-   salus unlock                       # prompts for `threshold` shares; reconstructs the key in memory
-   salus store -k mykey -v myvalue
-   salus read -k mykey
-   salus find '^my'
+   salusc shares                      # first-time init; prints the shares ONCE — record them
+   salusc unlock                      # prompts for `threshold` shares; reconstructs the key in memory
+   salusc store -k mykey -v myvalue
+   salusc read -k mykey
+   salusc find '^my'
    ```
 
 The daemon must be unlocked before `store`/`read` succeed (otherwise
@@ -120,10 +120,10 @@ TOML file (env vars win). Environment variables use the `SALUSD_` prefix, e.g.
 `/var/log/salus`, and the socket is `/var/run/salus.sock` (namespaced where the
 platform supports it, otherwise a `/tmp` file).
 
-### `salus` (client)
+### `salusc` (client)
 
 ```text
-salus [OPTIONS] <COMMAND>
+salusc [OPTIONS] <COMMAND>
 ```
 
 Global options: `-v, --verbose`, `-q, --quiet`, `-c, --config-path <PATH>`.

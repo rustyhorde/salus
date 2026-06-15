@@ -9,7 +9,7 @@
 //! Fuzz target for the client's wire-protocol decode of `Response`.
 //!
 //! The CLI client runs `decode_from_slice::<Response>` over bytes read from the
-//! daemon socket (`salus/src/inter/mod.rs`). A compromised or buggy daemon (or
+//! daemon socket (`salusc/src/inter/mod.rs`). A compromised or buggy daemon (or
 //! anything able to write to the socket) must not be able to panic the client,
 //! so every byte string must decode to an `Err` or a well-formed `Response`.
 //!
