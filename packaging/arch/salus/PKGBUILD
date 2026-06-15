@@ -23,8 +23,8 @@ build() {
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     cargo build --release --locked --bin salusd --bin salusc
-    cargo xtask dist salusd
-    cargo xtask dist salusc
+    cargo run --release --locked -p xtask -- dist salusd
+    cargo run --release --locked -p xtask -- dist salusc
 }
 
 package() {

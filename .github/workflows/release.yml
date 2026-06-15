@@ -89,8 +89,8 @@ jobs:
 
       - name: Generate xtask dist artifacts
         run: |
-          cargo xtask dist salusd
-          cargo xtask dist salusc
+          cargo run --locked -p xtask -- dist salusd
+          cargo run --locked -p xtask -- dist salusc
 
       - name: Create dist tarball
         run: tar -czf dist-salus.tar.gz -C dist salusd salusc
@@ -172,8 +172,8 @@ jobs:
 
       - name: Generate xtask dist artifacts
         run: |
-          cargo xtask dist salusd
-          cargo xtask dist salusc
+          cargo run --locked -p xtask -- dist salusd
+          cargo run --locked -p xtask -- dist salusc
 
       - name: Bundle macOS tarball
         run: |
