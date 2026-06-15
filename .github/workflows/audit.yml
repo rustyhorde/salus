@@ -45,10 +45,11 @@ jobs:
           create_issue: ${{ github.event_name != 'pull_request' }}
 
   audit-fuzz:
-    name: 💣 Audit Fuzz 💣
     runs-on: ubuntu-latest
+    name: 💣 Audit Fuzz 💣
     permissions:
       contents: read
+      issues: write
     steps:
       - name: ✅ Checkout ✅
         uses: Wandalen/wretry.action@71a909ebf09f3ffdc6f42a17bd54ecb43481da49 # v3.8.0
@@ -57,19 +58,19 @@ jobs:
           attempt_limit: 3
           attempt_delay: 30000
 
-      - name: 🦀 Install stable Rust 🦀
-        # master
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      # The fuzz crate is excluded from the workspace, so the audit above never
+      # sees its dependencies. `audit-check` runs `cargo audit` against the
+      # repo-root `Cargo.lock`, so promote the fuzz lockfile into place first.
+      - name: 📦 Stage fuzz lockfile 📦
+        run: cp fuzz/Cargo.lock Cargo.lock
+
+      - name: 💣 Audit 💣
+        # v0
+        uses: rustyhorde/audit-check@f7875ca3428c17cce4d5a141ea1128568db8b6c2
         with:
-          toolchain: stable
-
-      - name: 📦 Install cargo-audit 📦
-        run: cargo install cargo-audit
-
-      # The fuzz crate is excluded from the workspace, so it carries its own
-      # Cargo.lock that the workspace audit above never sees. Audit it here.
-      - name: 💣 Audit fuzz dependencies 💣
-        run: cargo audit --deny warnings --file fuzz/Cargo.lock
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deny: warnings
+          create_issue: ${{ github.event_name != 'pull_request' }}
 
   fuzz-smoke:
     name: 🧪 Fuzz Smoke Test 🧪
