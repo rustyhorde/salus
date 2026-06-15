@@ -1,0 +1,67 @@
+[package]
+name = "salus-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.4.2", features = ["derive"] }
+libfuzzer-sys = "0.4.13"
+libsalus = { path = "../libsalus" }
+salusd = { path = "../salusd", features = ["fuzzing"] }
+
+# Prevent the parent workspace from treating this crate as a member.
+[workspace]
+
+[[bin]]
+name = "fuzz_action_decode"
+path = "fuzz_targets/fuzz_action_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_response_decode"
+path = "fuzz_targets/fuzz_response_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_unlock_key"
+path = "fuzz_targets/fuzz_unlock_key.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_store_roundtrip"
+path = "fuzz_targets/fuzz_store_roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_find_regex"
+path = "fuzz_targets/fuzz_find_regex.rs"
+test = false
+doc = false
+
+[[test]]
+name = "regression_action_decode"
+path = "fuzz_targets/regression_action_decode.rs"
+
+[[test]]
+name = "regression_response_decode"
+path = "fuzz_targets/regression_response_decode.rs"
+
+[[test]]
+name = "regression_unlock_key"
+path = "fuzz_targets/regression_unlock_key.rs"
+
+[[test]]
+name = "regression_store_roundtrip"
+path = "fuzz_targets/regression_store_roundtrip.rs"
+
+[[test]]
+name = "regression_find_regex"
+path = "fuzz_targets/regression_find_regex.rs"

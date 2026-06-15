@@ -6,9 +6,45 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use bincode::{Decode, Encode};
+use anyhow::Result;
+use bincode_next::{Decode, Encode, config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
 use getset::CopyGetters;
+
+/// Maximum size, in bytes, of a single encoded protocol message (1 MiB).
+///
+/// Both the daemon and the client refuse to decode or allocate beyond this
+/// bound, so a hostile peer cannot trigger an unbounded allocation by forging a
+/// large length prefix in an otherwise tiny message.
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+
+/// Encode a protocol message using the shared, size-bounded wire configuration.
+///
+/// # Errors
+///
+/// Returns an error if encoding fails or the encoded form would exceed
+/// [`MAX_MESSAGE_SIZE`].
+pub fn encode<E: Encode>(message: E) -> Result<Vec<u8>> {
+    Ok(encode_to_vec(
+        message,
+        standard().with_limit::<MAX_MESSAGE_SIZE>(),
+    )?)
+}
+
+/// Decode a protocol message using the shared, size-bounded wire configuration.
+///
+/// The size limit ensures a forged length prefix cannot drive an unbounded
+/// allocation; oversized or otherwise malformed input is rejected with an error
+/// instead.
+///
+/// # Errors
+///
+/// Returns an error if the bytes are not a valid encoding of `D` or would
+/// exceed [`MAX_MESSAGE_SIZE`].
+pub fn decode<D: Decode<()>>(bytes: &[u8]) -> Result<D> {
+    let (message, _len) = decode_from_slice(bytes, standard().with_limit::<MAX_MESSAGE_SIZE>())?;
+    Ok(message)
+}
 
 /// The init message to send to the daemon
 #[derive(Builder, Clone, Copy, CopyGetters, Debug, Decode, Encode)]
@@ -107,6 +143,8 @@ pub enum Response {
     Error(String),
     /// Success
     Success,
+    /// The store could not be unlocked with the provided shares
+    UnlockFailed,
     /// Shares
     Shares(Shares),
     /// The share store is already initialized
@@ -114,7 +152,7 @@ pub enum Response {
     /// The threshold
     Threshold(u8),
     /// The value read from the store
-    Value(Option<String>),
+    Value(Option<Vec<u8>>),
     /// The key was not found in the store
     KeyNotFound,
     /// The keys that matched the regex
