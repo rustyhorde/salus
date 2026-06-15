@@ -12,6 +12,12 @@ use clap::error::ErrorKind;
 pub(crate) enum Error {
     #[error("There is no valid config directory")]
     ConfigDir,
+    #[error("There is no valid data directory")]
+    DataDir,
+    #[error("There is no valid log directory")]
+    LogDir,
+    #[error("Unable to create a parent directory")]
+    CreateDir,
     #[error("Unable to build a valid configuration")]
     ConfigBuild,
     #[error("Unable to deserialize config")]

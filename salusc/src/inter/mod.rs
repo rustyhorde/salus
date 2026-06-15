@@ -16,15 +16,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Builder, Clone, Debug)]
 pub(crate) struct Inter {
-    #[builder(into, default = "/var/run/salus.sock")]
-    #[allow(dead_code)]
-    name: String,
+    /// Optional override for the IPC socket path. When `None`, libsalus resolves
+    /// the shared `SALUS_SOCKET` env var or the platform default.
+    #[builder(into)]
+    name: Option<String>,
 }
 
 impl Inter {
     pub(crate) async fn send(&self, message: Action) -> Result<Response> {
-        // Pick a name.
-        let (_base_name, name) = socket_name()?;
+        // Resolve the socket name, honoring any configured override.
+        let name = socket_name(self.name.as_deref())?;
 
         // Await this here since we can't do a whole lot without a connection.
         let conn = Stream::connect(name).await?;

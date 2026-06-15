@@ -29,6 +29,7 @@ name = "macos"
 anyhow = { workspace = true }
 bincode-next = { workspace = true }
 bon = { workspace = true }
+dirs2 = { workspace = true }
 getset = { workspace = true }
 interprocess = { workspace = true }
 ssss = "1.0.5"

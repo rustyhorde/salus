@@ -6,7 +6,10 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use std::{fs::File, path::PathBuf};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use tracing::{Level, level_filters::LevelFilter};
@@ -15,7 +18,8 @@ use tracing_subscriber_init::{Iso8601, TracingConfig, compact, try_init};
 
 use crate::{
     config::{ConfigSalusd, PathDefaults},
-    utils::to_path_buf,
+    error::Error,
+    utils::{ensure_parent_dir, to_path_buf},
 };
 
 /// Initialize tracing
@@ -48,6 +52,7 @@ where
 
     // Setup the tracing file layer
     let tracing_absolute_path = tracing_absolute_path(defaults)?;
+    ensure_parent_dir(&tracing_absolute_path)?;
     let tracing_file = File::create(&tracing_absolute_path)?;
     let (layer, level_filter) = compact(tracing_config);
     let directives = directives(config, level_filter);
@@ -95,13 +100,31 @@ where
         .map_or_else(default_fn, to_path_buf)
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn default_tracing_absolute_path<D>(defaults: &D) -> Result<PathBuf>
 where
     D: PathDefaults,
 {
-    let mut config_file_path = PathBuf::from(defaults.default_tracing_path());
-    config_file_path.push(defaults.default_tracing_file_name());
-    let _ = config_file_path.set_extension("log");
-    Ok(config_file_path)
+    // `dirs2` exposes no dedicated log/state directory, so logs live under the
+    // local data dir (Linux `~/.local/share`, macOS `~/Library/Application
+    // Support`).
+    let base = dirs2::data_local_dir().ok_or(Error::LogDir)?;
+    Ok(log_file_in(&base, &defaults.app_name()))
+}
+
+/// Compose the default log file path: `<base>/<app>/<app>.log`.
+fn log_file_in(base: &Path, app: &str) -> PathBuf {
+    base.join(app).join(app).with_extension("log")
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::Path;
+
+    use super::log_file_in;
+
+    #[test]
+    fn log_file_in_composes_app_dir_and_extension() {
+        let path = log_file_in(Path::new("/base"), "salusd");
+        assert_eq!(path, Path::new("/base/salusd/salusd.log"));
+    }
 }

@@ -8,7 +8,7 @@
 
 use std::{
     borrow::Borrow,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -18,7 +18,8 @@ use redb::{AccessGuard, Database, Key, ReadableDatabase, TableDefinition, Value}
 use crate::{
     config::PathDefaults,
     db::values::{config::ConfigVal, salus::SalusVal},
-    utils::to_path_buf,
+    error::Error,
+    utils::{ensure_parent_dir, to_path_buf},
 };
 
 pub(crate) mod values;
@@ -35,6 +36,7 @@ pub(crate) const CHECK_KEY_KEY: &str = "CHECK_KEY";
 
 pub(crate) fn initialize_redb<T: PathDefaults>(defaults: &T) -> Result<Arc<Mutex<Database>>> {
     let redb_path = database_absolute_path(defaults)?;
+    ensure_parent_dir(&redb_path)?;
     let db = Database::create(redb_path)?;
     Ok(Arc::new(Mutex::new(db)))
 }
@@ -87,15 +89,17 @@ where
         .map_or_else(default_fn, to_path_buf)
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn default_database_absolute_path<D>(defaults: &D) -> Result<PathBuf>
 where
     D: PathDefaults,
 {
-    let mut database_file_path = PathBuf::from(defaults.default_database_path());
-    database_file_path.push(defaults.default_database_file_name());
-    let _ = database_file_path.set_extension("redb");
-    Ok(database_file_path)
+    let base = dirs2::data_dir().ok_or(Error::DataDir)?;
+    Ok(db_file_in(&base, &defaults.app_name()))
+}
+
+/// Compose the default database file path: `<base>/<app>/<app>.redb`.
+fn db_file_in(base: &Path, app: &str) -> PathBuf {
+    base.join(app).join(app).with_extension("redb")
 }
 
 pub(crate) fn unlock_redb(
@@ -107,4 +111,17 @@ pub(crate) fn unlock_redb(
         Err(poisoned) => poisoned.into_inner(),
     };
     redb_fn(&mut redb)
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::Path;
+
+    use super::db_file_in;
+
+    #[test]
+    fn db_file_in_composes_app_dir_and_extension() {
+        let path = db_file_in(Path::new("/base"), "salusd");
+        assert_eq!(path, Path::new("/base/salusd/salusd.redb"));
+    }
 }

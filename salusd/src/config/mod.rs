@@ -6,7 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use config::{Config, Environment, File, FileFormat, Source};
@@ -17,30 +17,31 @@ use tracing_subscriber_init::TracingConfig;
 use crate::{error::Error, utils::to_path_buf};
 
 /// Trait to allow default paths to be supplied to [`load`]
+///
+/// Default locations are derived per-platform from `dirs2` using
+/// [`app_name`](PathDefaults::app_name); the `*_absolute_path` methods provide
+/// explicit overrides (e.g. from a CLI flag) that bypass those defaults.
 pub(crate) trait PathDefaults {
     /// Environment variable prefix
     fn env_prefix(&self) -> String;
+    /// The application name used as the per-user directory and file stem
+    fn app_name(&self) -> String;
     /// The absolute path to use for the config file
     fn config_absolute_path(&self) -> Option<String>;
-    /// The default file path to use
-    fn default_file_path(&self) -> String;
-    /// The default file name to use
-    fn default_file_name(&self) -> String;
     /// The abolute path to use for tracing output
     fn tracing_absolute_path(&self) -> Option<String>;
-    /// The default logging path to use
-    fn default_tracing_path(&self) -> String;
-    /// The default log file name to use
-    fn default_tracing_file_name(&self) -> String;
     /// The absolute path to use for the database
     fn database_absolute_path(&self) -> Option<String>;
-    /// The default database path to use
-    fn default_database_path(&self) -> String;
-    /// The default database file name to use
-    fn default_database_file_name(&self) -> String;
 }
 
-#[derive(Clone, CopyGetters, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize)]
+/// The documented default for [`ConfigSalusd::key_timeout`].
+const DEFAULT_KEY_TIMEOUT: u64 = 20;
+
+// `#[serde(default)]` fills any field absent from all config sources from
+// `Default`, making the built-in defaults the lowest-precedence layer (a config
+// file/env/CLI need not supply every field).
+#[derive(Clone, CopyGetters, Debug, Deserialize, Eq, Getters, PartialEq, Serialize)]
+#[serde(default)]
 pub(crate) struct ConfigSalusd {
     #[getset(get_copy = "pub(crate)")]
     verbose: u8,
@@ -50,8 +51,25 @@ pub(crate) struct ConfigSalusd {
     enable_std_output: bool,
     #[getset(get_copy = "pub(crate)")]
     key_timeout: u64,
+    /// Optional override for the IPC socket path. Falls back to the shared
+    /// `SALUS_SOCKET` env var and then the platform default in libsalus.
+    #[getset(get = "pub(crate)")]
+    socket_path: Option<String>,
     #[getset(get = "pub(crate)")]
     tracing: Tracing,
+}
+
+impl Default for ConfigSalusd {
+    fn default() -> Self {
+        Self {
+            verbose: 0,
+            quiet: 0,
+            enable_std_output: false,
+            key_timeout: DEFAULT_KEY_TIMEOUT,
+            socket_path: None,
+            tracing: Tracing::default(),
+        }
+    }
 }
 
 impl TracingConfig for ConfigSalusd {
@@ -87,6 +105,7 @@ impl TracingConfig for ConfigSalusd {
 /// Tracing configuration
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, CopyGetters, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize)]
+#[serde(default)]
 pub(crate) struct Tracing {
     /// Should we trace the event target
     #[getset(get_copy = "pub(crate)")]
@@ -117,18 +136,34 @@ where
 {
     let config_file_path = config_file_path(defaults)?;
     let config = Config::builder()
+        // Lowest precedence first; the `config` crate is last-wins, so the order
+        // is: TOML file -> environment -> explicitly-set CLI flags.
         .add_source(
-            Environment::with_prefix(&defaults.env_prefix())
-                .separator("_")
-                .try_parsing(true),
+            File::from(config_file_path)
+                .format(FileFormat::Toml)
+                .required(false),
         )
+        .add_source(env_source(&defaults.env_prefix()))
         .add_source(cli.clone())
-        .add_source(File::from(config_file_path).format(FileFormat::Toml))
         .build()
         .with_context(|| Error::ConfigBuild)?;
     config
         .try_deserialize::<T>()
         .with_context(|| Error::ConfigDeserialize)
+}
+
+/// Build the environment-variable config source for `prefix`.
+///
+/// `prefix_separator("_")` separates the prefix from the key, while
+/// `separator("__")` is used for nesting. This keeps field names that contain
+/// underscores intact (`SALUSD_KEY_TIMEOUT` -> `key_timeout`) and reserves the
+/// double underscore for descending into nested structs
+/// (`SALUSD_TRACING__WITH_TARGET` -> `tracing.with_target`).
+pub(crate) fn env_source(prefix: &str) -> Environment {
+    Environment::with_prefix(prefix)
+        .prefix_separator("_")
+        .separator("__")
+        .try_parsing(true)
 }
 
 fn config_file_path<D>(defaults: &D) -> Result<PathBuf>
@@ -146,9 +181,56 @@ fn default_config_file_path<D>(defaults: &D) -> Result<PathBuf>
 where
     D: PathDefaults,
 {
-    let mut config_file_path = dirs2::config_dir().ok_or(Error::ConfigDir)?;
-    config_file_path.push(defaults.default_file_path());
-    config_file_path.push(defaults.default_file_name());
-    let _ = config_file_path.set_extension("toml");
-    Ok(config_file_path)
+    let base = dirs2::config_dir().ok_or(Error::ConfigDir)?;
+    Ok(config_file_in(&base, &defaults.app_name()))
+}
+
+/// Compose the default config file path: `<base>/<app>/<app>.toml`.
+fn config_file_in(base: &Path, app: &str) -> PathBuf {
+    base.join(app).join(app).with_extension("toml")
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::Path;
+
+    use config::{Config, Map};
+
+    use super::{ConfigSalusd, DEFAULT_KEY_TIMEOUT, config_file_in, env_source};
+
+    #[test]
+    fn config_file_in_composes_app_dir_and_extension() {
+        let path = config_file_in(Path::new("/base"), "salusd");
+        assert_eq!(path, Path::new("/base/salusd/salusd.toml"));
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_defaults() {
+        // No source provides any value; `#[serde(default)]` must fill them all.
+        let config = Config::builder().build().unwrap();
+        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+        assert_eq!(cfg.key_timeout(), DEFAULT_KEY_TIMEOUT);
+        assert_eq!(cfg.verbose(), 0);
+        assert!(!cfg.enable_std_output());
+        assert!(cfg.socket_path().is_none());
+    }
+
+    #[test]
+    fn env_separators_map_flat_and_nested_fields() {
+        // Single underscores stay within the field name; the double underscore
+        // descends into the nested `tracing` struct.
+        let mut map = Map::new();
+        let _old = map.insert("SALUSD_KEY_TIMEOUT".to_string(), "99".to_string());
+        let _old = map.insert(
+            "SALUSD_TRACING__WITH_TARGET".to_string(),
+            "true".to_string(),
+        );
+        let config = Config::builder()
+            .add_source(env_source("SALUSD").source(Some(map)))
+            .build()
+            .unwrap();
+        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+        assert_eq!(cfg.key_timeout(), 99);
+        assert!(cfg.tracing().with_target());
+    }
 }

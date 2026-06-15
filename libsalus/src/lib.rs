@@ -231,6 +231,8 @@
 )]
 #![cfg_attr(all(docsrs), feature(doc_cfg))]
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use interprocess::local_socket::GenericFilePath;
 use interprocess::local_socket::Name;
@@ -255,20 +257,91 @@ use interprocess::local_socket::NameType;
 use interprocess::local_socket::ToNsName;
 pub use ssss::SsssConfig;
 
+/// The base file name used for the IPC socket.
+const SOCKET_FILE_NAME: &str = "salus.sock";
+
+/// The environment variable, shared by both the daemon and the client, that
+/// overrides the IPC socket location. Resolving it inside this crate keeps the
+/// two processes in sync from a single setting.
+const SOCKET_ENV: &str = "SALUS_SOCKET";
+
+/// Where the IPC socket lives once resolved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SocketTarget {
+    /// A namespaced socket addressed by a bare name (e.g. the Linux abstract
+    /// namespace), used by default where the platform supports it.
+    Namespaced(String),
+    /// A filesystem socket addressed by path, used for explicit overrides and
+    /// as the fallback on platforms without namespaced socket support.
+    File(PathBuf),
+}
+
+/// Resolve where the IPC socket should live.
+///
+/// Precedence: an explicit per-side override wins, then the shared
+/// [`SOCKET_ENV`] value, then a platform default (a namespaced name where
+/// supported, otherwise a file under the runtime/temp directory).
+fn socket_target(override_path: Option<&str>, env_socket: Option<&str>) -> SocketTarget {
+    if let Some(path) = override_path.or(env_socket) {
+        SocketTarget::File(PathBuf::from(path))
+    } else if GenericNamespaced::is_supported() {
+        SocketTarget::Namespaced(SOCKET_FILE_NAME.to_string())
+    } else {
+        let dir = dirs2::runtime_dir().unwrap_or_else(std::env::temp_dir);
+        SocketTarget::File(dir.join(SOCKET_FILE_NAME))
+    }
+}
+
 /// Get the socket name used for interprocess communication.
+///
+/// `override_path`, when `Some`, is an explicit socket path supplied by the
+/// caller (CLI flag or config file) and takes precedence over the shared
+/// `SALUS_SOCKET` environment variable and the platform default.
 ///
 /// # Errors
 ///
 /// * An error can be thrown if the socket name cannot be created.
 ///
-pub fn socket_name<'a>() -> Result<(&'static str, Name<'a>)> {
-    // Pick a name.
-    let base_socket = "salus.sock";
-    let ns_prefix = "/var/run/";
-    let name = if GenericNamespaced::is_supported() {
-        format!("{ns_prefix}{base_socket}").to_ns_name::<GenericNamespaced>()?
-    } else {
-        format!("/tmp/{base_socket}").to_fs_name::<GenericFilePath>()?
+pub fn socket_name<'a>(override_path: Option<&str>) -> Result<Name<'a>> {
+    let env_socket = std::env::var(SOCKET_ENV).ok();
+    let name = match socket_target(override_path, env_socket.as_deref()) {
+        SocketTarget::Namespaced(name) => name.to_ns_name::<GenericNamespaced>()?,
+        SocketTarget::File(path) => path.to_fs_name::<GenericFilePath>()?,
     };
-    Ok((base_socket, name))
+    Ok(name)
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::PathBuf;
+
+    use super::{SOCKET_FILE_NAME, SocketTarget, socket_target};
+
+    #[test]
+    fn override_wins_over_env() {
+        let target = socket_target(Some("/tmp/override.sock"), Some("/tmp/env.sock"));
+        assert_eq!(
+            target,
+            SocketTarget::File(PathBuf::from("/tmp/override.sock"))
+        );
+    }
+
+    #[test]
+    fn env_used_when_no_override() {
+        let target = socket_target(None, Some("/tmp/env.sock"));
+        assert_eq!(target, SocketTarget::File(PathBuf::from("/tmp/env.sock")));
+    }
+
+    #[test]
+    fn default_used_when_nothing_configured() {
+        // With neither an override nor the env var set, the default depends on
+        // platform support: a bare namespaced name, or a file under the
+        // runtime/temp directory. Either way it must end with the base name.
+        match socket_target(None, None) {
+            SocketTarget::Namespaced(name) => assert_eq!(name, SOCKET_FILE_NAME),
+            SocketTarget::File(path) => {
+                assert_eq!(path.file_name().unwrap(), SOCKET_FILE_NAME);
+            }
+        }
+    }
 }

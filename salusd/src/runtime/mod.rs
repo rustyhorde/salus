@@ -65,7 +65,7 @@ where
     trace!("database initialized");
 
     // Setup the socket
-    let (_base_name, name) = socket_name()?;
+    let name = socket_name(config.socket_path().as_deref())?;
     trace!("socket setup");
 
     // Configure our listener...

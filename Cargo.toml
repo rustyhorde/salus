@@ -10,6 +10,7 @@ bincode-next = "3.0.0-rc.15"
 bon = "3.9.2"
 clap = { version = "4.6.1", features = ["derive"] }
 config = "0.15.23"
+dirs2 = "3.0.1"
 getset = "0.1.7"
 interprocess = { version = "2.4.2", features = ["async", "tokio"] }
 rustversion = "1.0.22"

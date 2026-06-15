@@ -12,6 +12,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::{
+    config::load,
     inter::Inter,
     runtime::cli::{Cli, Commands},
 };
@@ -30,7 +31,12 @@ where
         Cli::try_parse()?
     };
 
-    let inter = Inter::builder().build();
+    // Load the layered configuration (TOML file, SALUSC_ env vars, CLI flags).
+    let config = load(&cli, cli.config_path())?;
+
+    let inter = Inter::builder()
+        .maybe_name(config.socket_path().map(String::from))
+        .build();
 
     match cli.command() {
         Commands::Shares {

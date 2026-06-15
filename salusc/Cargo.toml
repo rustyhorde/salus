@@ -31,9 +31,11 @@ bon = { workspace = true }
 clap = { workspace = true }
 config = { workspace = true }
 crossterm = "0.29.0"
+dirs2 = { workspace = true }
 interprocess = { workspace = true }
 libsalus = { path = "../libsalus" }
 scanpw = "1.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
 tokio = { workspace = true, features = ["io-std"] }
 tracing = { workspace = true }
 

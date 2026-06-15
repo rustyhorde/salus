@@ -33,6 +33,10 @@ pub(crate) struct Cli {
     /// Config file path
     #[clap(short, long, help = "Specify a path to the config file")]
     config_path: Option<String>,
+    /// Override the IPC socket path (otherwise the shared `SALUS_SOCKET` env var
+    /// or the platform default is used)
+    #[clap(short, long, help = "Specify the path to the IPC socket")]
+    socket_path: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -40,6 +44,10 @@ pub(crate) struct Cli {
 impl Cli {
     pub(crate) fn command(self) -> Commands {
         self.command
+    }
+
+    pub(crate) fn config_path(&self) -> Option<&str> {
+        self.config_path.as_deref()
     }
 }
 
@@ -51,18 +59,25 @@ impl Source for Cli {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map = Map::new();
         let origin = String::from("command line");
-        let _old = map.insert(
-            "verbose".to_string(),
-            Value::new(Some(&origin), ValueKind::U64(u8::into(self.verbose))),
-        );
-        let _old = map.insert(
-            "quiet".to_string(),
-            Value::new(Some(&origin), ValueKind::U64(u8::into(self.quiet))),
-        );
-        if let Some(config_path) = &self.config_path {
+        // Only emit flags the user actually set, so CLI defaults do not clobber
+        // values from the lower-precedence env/file sources. The `config_path`
+        // override is consumed directly to locate the file, not layered here.
+        if self.verbose > 0 {
             let _old = map.insert(
-                "config_path".to_string(),
-                Value::new(Some(&origin), ValueKind::String(config_path.clone())),
+                "verbose".to_string(),
+                Value::new(Some(&origin), ValueKind::U64(u8::into(self.verbose))),
+            );
+        }
+        if self.quiet > 0 {
+            let _old = map.insert(
+                "quiet".to_string(),
+                Value::new(Some(&origin), ValueKind::U64(u8::into(self.quiet))),
+            );
+        }
+        if let Some(socket_path) = &self.socket_path {
+            let _old = map.insert(
+                "socket_path".to_string(),
+                Value::new(Some(&origin), ValueKind::String(socket_path.clone())),
             );
         }
         Ok(map)
@@ -98,4 +113,30 @@ pub(crate) enum Commands {
         #[arg(index = 1)]
         regex: String,
     },
+}
+
+#[cfg(test)]
+mod test {
+    use clap::Parser;
+    use config::Source;
+
+    use super::Cli;
+
+    #[test]
+    fn collect_omits_unset_flags() {
+        let cli = Cli::try_parse_from(["salusc", "unlock"]).unwrap();
+        let map = cli.collect().unwrap();
+        assert!(
+            map.is_empty(),
+            "default Cli should emit nothing, got {map:?}"
+        );
+    }
+
+    #[test]
+    fn collect_includes_set_socket_path() {
+        let cli = Cli::try_parse_from(["salusc", "-s", "/tmp/s.sock", "unlock"]).unwrap();
+        let map = cli.collect().unwrap();
+        assert!(map.contains_key("socket_path"));
+        assert!(!map.contains_key("verbose"));
+    }
 }

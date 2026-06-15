@@ -744,6 +744,7 @@ dependencies = [
  "anyhow",
  "bincode-next",
  "bon",
+ "dirs2",
  "getset",
  "interprocess",
  "rustversion",

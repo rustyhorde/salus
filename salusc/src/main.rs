@@ -235,6 +235,7 @@ use crate::error::{clap_or_error, success};
 use anyhow::Result;
 use std::process;
 
+mod config;
 mod error;
 mod inter;
 mod runtime;

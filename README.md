@@ -104,21 +104,33 @@ salusd [OPTIONS]
 | `-c, --config-absolute-path <PATH>` | Absolute path to a non-standard config file |
 | `-t, --tracing-absolute-path <PATH>` | Absolute path to a non-standard tracing output file |
 | `-d, --database-absolute-path <PATH>` | Absolute path to a non-standard database file |
+| `-s, --socket-path <PATH>` | Override the IPC socket path (see `SALUS_SOCKET` below) |
 
-**Configuration** is layered from environment variables, then CLI flags, then a
-TOML file (env vars win). Environment variables use the `SALUSD_` prefix, e.g.
-`SALUSD_KEY_TIMEOUT=30`. Recognized keys:
+**Configuration** is layered, lowest precedence first: a TOML file, then
+environment variables, then **explicitly-set** CLI flags (highest). A CLI flag
+left at its default does not override an env/file value, so e.g. `SALUSD_VERBOSE`
+is honored unless you actually pass `-v`. Any field absent from every source
+falls back to its built-in default. Environment variables use the `SALUSD_`
+prefix; single underscores stay within a field name (`SALUSD_KEY_TIMEOUT=30` →
+`key_timeout`) and a double underscore descends into a nested table
+(`SALUSD_TRACING__WITH_TARGET=true` → `[tracing] with_target`). Recognized keys:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `key_timeout` | `u64` | `20` | Seconds before the in-memory key auto-clears. Env/TOML only — no CLI flag. |
+| `socket_path` | `string` | — | IPC socket override. Also `-s` / `SALUS_SOCKET`. |
 | `verbose` / `quiet` | `u8` | `0` | Also settable via CLI. |
 | `enable_std_output` | `bool` | `false` | Also settable via CLI. |
-| `[tracing]` | table | — | `with_target`, `with_thread_ids`, `with_thread_names`, `with_line_number`, `with_level`, `directives`. |
+| `[tracing]` | table | — | `with_target`, `with_thread_ids`, `with_thread_names`, `with_line_number`, `with_level`, `directives` (env: `SALUSD_TRACING__WITH_TARGET`, …). |
 
-**Default paths:** config and database live under `/var/lib/salus`, logs under
-`/var/log/salus`, and the socket is `/var/run/salus.sock` (namespaced where the
-platform supports it, otherwise a `/tmp` file).
+**Default paths** are per-user and cross-platform via `dirs2`: config under the
+config dir, database under the data dir, and logs under the local data dir, each
+in a `salusd/` subdirectory — on Linux `~/.config/salusd/`,
+`~/.local/share/salusd/`; on macOS `~/Library/Application Support/salusd/`. The
+IPC socket defaults to a namespaced name where the platform supports it,
+otherwise a file under the runtime/temp dir. Set the **shared** `SALUS_SOCKET`
+environment variable (honored by both the daemon and the client) to relocate the
+socket from one place; `--socket-path` / `socket_path` override it per process.
 
 ### `salusc` (client)
 
@@ -126,7 +138,11 @@ platform supports it, otherwise a `/tmp` file).
 salusc [OPTIONS] <COMMAND>
 ```
 
-Global options: `-v, --verbose`, `-q, --quiet`, `-c, --config-path <PATH>`.
+Global options: `-v, --verbose`, `-q, --quiet`, `-c, --config-path <PATH>`,
+`-s, --socket-path <PATH>`. Like the daemon, the client reads a TOML config file
+(`<config dir>/salusc/salusc.toml` by default) and `SALUSC_` environment
+variables in addition to CLI flags; it uses `SALUS_SOCKET` / `--socket-path` to
+find the daemon's socket.
 
 | Command | Description |
 | --- | --- |
@@ -149,8 +165,10 @@ Command options:
 enums (defined in `libsalus/src/message/mod.rs`), serialized with
 [`bincode-next`][bincode] (`standard()` config). Each request is a fresh socket
 connection: the client writes one encoded `Action`, half-closes the send side,
-and reads the `Response` to EOF. `socket_name()` is the single source of truth
-for the socket path.
+and reads the `Response` to EOF. `socket_name(override)` is the single source of
+truth for the socket path; it resolves an explicit per-side override, then the
+shared `SALUS_SOCKET` env var, then the platform default, keeping the daemon and
+client in sync.
 
 **Daemon concurrency** (`salusd/src/runtime/mod.rs`). The daemon accepts
 connections in a loop. Per connection it spawns two tasks: one decodes the
