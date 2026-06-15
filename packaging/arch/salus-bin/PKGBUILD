@@ -11,6 +11,7 @@ provides=('salus')
 conflicts=('salus')
 depends=()
 makedepends=()
+install=salusd.install
 
 _base="https://github.com/rustyhorde/salus/releases/download/v${pkgver}"
 

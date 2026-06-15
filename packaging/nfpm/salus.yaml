@@ -19,6 +19,14 @@ deb:
 rpm:
   compression: xz
 
+overrides:
+  deb:
+    scripts:
+      postinstall: packaging/nfpm/scripts/salus-postinst
+  rpm:
+    scripts:
+      postinstall: packaging/nfpm/scripts/salus-rpm-postinst
+
 contents:
   # Binaries
   - src: salusd-x86_64-unknown-linux-musl

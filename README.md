@@ -269,19 +269,166 @@ generic `read_value` / `write_value` helpers.
 
 ## Installation
 
-Beyond `cargo install`, releases are distributed through several channels:
+Each release publishes the `salusd` daemon and the `salusc` client through
+several channels. Every packaged install also ships shell completions, man
+pages, an example config, and a systemd **user** unit for the daemon. Pick the
+section for your platform.
 
-- **crates.io** — `cargo install salusd` and `cargo install salusc`.
-- **Arch (AUR)** — `salus` (builds from source) or `salus-bin` (prebuilt static
-  MUSL binaries). Both install the `salusd` daemon, the `salusc` client, shell
-  completions, man pages, and a systemd user unit.
-- **Debian / RPM** — a signed apt/rpm repository (see `rustyhorde/salus-packages`).
-- **Homebrew** — `brew tap rustyhorde/salus && brew install salus`.
+### Installation (Arch Linux / AUR)
+
+Two AUR packages are available; install either with an AUR helper (e.g. `yay`,
+`paru`) or manually with `makepkg`. They install the same binary names and
+conflict with each other — only one can be installed at a time.
+
+| Package | Build | Architectures |
+|---------|-------|---------------|
+| `salus` | Compiles locally from the release source tarball (`cargo build`) | `x86_64` |
+| `salus-bin` | Pre-compiled static MUSL binaries from the GitHub release | `x86_64`, `aarch64` |
+
+```bash
+# Pre-compiled binaries (no Rust toolchain required)
+yay -S salus-bin
+
+# Or build from source (requires rust, cmake, clang)
+yay -S salus
+```
+
+Install manually with `makepkg`:
+
+```bash
+# Pre-compiled binary package
+git clone https://aur.archlinux.org/salus-bin.git
+cd salus-bin && makepkg -si && cd ..
+
+# Or the source package
+git clone https://aur.archlinux.org/salus.git
+cd salus && makepkg -si && cd ..
+```
+
+Removing:
+
+```bash
+sudo pacman -R salus        # or salus-bin
+sudo pacman -Rs salus       # also remove now-orphaned dependencies
+```
+
+### Installation (Debian / Ubuntu)
+
+#### Install from the apt repository (recommended)
+
+The signed apt repository at <https://rustyhorde.github.io/salus-packages/>
+tracks every release, so `apt upgrade` keeps salus current. Packages are built
+for `amd64` and `arm64`:
+
+```bash
+# Add the repository signing key
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://rustyhorde.github.io/salus-packages/gpg.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/salus.gpg
+
+# Add the apt source
+echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/salus.gpg] \
+  https://rustyhorde.github.io/salus-packages/apt stable main" \
+    | sudo tee /etc/apt/sources.list.d/salus.list
+
+# Install
+sudo apt update
+sudo apt install salus
+```
+
+#### Install a downloaded `.deb` directly
+
+Pre-built `.deb` packages are attached to each
+[GitHub release](https://github.com/rustyhorde/salus/releases) if you prefer not
+to add the repository:
+
+```bash
+# Download to /tmp (substitute the desired version and arch)
+VERSION=0.1.0
+wget -P /tmp \
+    https://github.com/rustyhorde/salus/releases/download/v${VERSION}/salus_${VERSION}_amd64.deb
+
+sudo apt install /tmp/salus_${VERSION}_amd64.deb
+```
+
+> **Note**: Place `.deb` files in `/tmp/` before installing with `apt`. When
+> reading a local file `apt` drops privileges to the `_apt` user, which cannot
+> read files under `/home/`. Using `/tmp/` (world-readable) avoids the resulting
+> permission warning. Alternatively, `sudo dpkg -i salus_${VERSION}_amd64.deb`
+> runs as root and works from any location (run `sudo apt-get install -f`
+> afterwards to resolve dependencies).
+
+Re-running either command with a newer `.deb` upgrades an existing install.
+
+Removing:
+
+```bash
+sudo apt remove salus
+sudo apt purge salus        # also remove system config files
+```
+
+### Installation (Fedora / RHEL)
+
+Pre-built `.rpm` packages for `x86_64` and `aarch64` are served from the signed
+dnf repository at <https://rustyhorde.github.io/salus-packages/>, so
+`dnf upgrade` keeps salus current:
+
+```bash
+# Add the repository (imports the signing key on first install)
+sudo dnf config-manager \
+    --add-repo https://rustyhorde.github.io/salus-packages/rpm/salus.repo
+
+# Install
+sudo dnf install salus
+```
+
+> On older releases the subcommand is
+> `sudo dnf config-manager addrepo --from-repofile=…`, and on dnf 4 you may need
+> `sudo dnf install dnf-plugins-core` first.
+
+`.rpm` files are also attached to each
+[GitHub release](https://github.com/rustyhorde/salus/releases) for direct
+installation:
+
+```bash
+VERSION=0.1.0
+sudo dnf install \
+    ./salus-${VERSION}-1.x86_64.rpm        # or salus-${VERSION}-1.aarch64.rpm
+```
+
+Removing:
+
+```bash
+sudo dnf remove salus
+```
+
+### Installation (cargo)
+
+Requires a Rust toolchain. Install the two binaries directly from
+[crates.io](https://crates.io):
+
+```bash
+cargo install salusd        # the daemon
+cargo install salusc        # the client
+```
+
+Append `--version <x.y.z>` to install a specific release. A `cargo install` does
+**not** drop a systemd unit; see the note below to run one as a service.
+
+### Homebrew (macOS)
+
+```bash
+brew tap rustyhorde/salus
+brew install salus
+```
 
 ### Running salusd as a systemd user service
 
-The `salus`/`salus-bin` packages install `salusd.service` to
-`/usr/lib/systemd/user/`. Enable it per-user (no `sudo`):
+salusd is a **per-user** daemon — its database, config, and IPC socket are all
+per-user — so it runs as a systemd *user* service, not a system service. The
+`salus`/`salus-bin`, `.deb`, and `.rpm` packages install `salusd.service` to
+`/usr/lib/systemd/user/` with `ExecStart=/usr/bin/salusd`. Enable it per-user
+(no `sudo`):
 
 ```bash
 systemctl --user enable --now salusd
@@ -291,9 +438,24 @@ The daemon holds the reconstructed key only in memory and clears it after
 `key_timeout`, so after every (re)start you must unlock it again:
 
 ```bash
-salusc shares   # first-time init only — records the shares
+salusc shares   # first-time init only — records the shares ONCE
 salusc unlock   # reconstruct the key in the daemon's memory
 ```
+
+> **Upgrades.** Because salusd is a *user* service, the package manager (which
+> runs as root) cannot restart it for you, and an automatic restart would clear
+> your in-memory key anyway. After upgrading the package, pick up the new binary
+> manually:
+>
+> ```bash
+> systemctl --user daemon-reload
+> systemctl --user restart salusd
+> salusc unlock                       # the key cleared on restart
+> ```
+
+> **Installed via `cargo install`?** The binary lives at `~/.cargo/bin/salusd`,
+> not `/usr/bin/salusd`. Copy the unit from a packaged install (or write your
+> own) and set `ExecStart=%h/.cargo/bin/salusd` before enabling it.
 
 ## Releasing
 

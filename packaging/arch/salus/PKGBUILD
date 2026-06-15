@@ -9,6 +9,7 @@ url="https://github.com/rustyhorde/salus"
 license=('MIT' 'Apache-2.0')
 depends=('gcc-libs')
 makedepends=('cargo' 'cmake' 'clang')
+install=salusd.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/rustyhorde/salus/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
