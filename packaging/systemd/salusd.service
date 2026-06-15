@@ -1,0 +1,16 @@
+[Unit]
+Description=Salus secret-store daemon
+Documentation=man:salusd(1)
+After=default.target
+
+[Service]
+Type=simple
+# salusd opens its own IPC socket and runs in the foreground; systemd manages it.
+ExecStart=%h/.cargo/bin/salusd
+Restart=on-failure
+RestartSec=5s
+# salusd logs to its tracing file by default. Do NOT pass -e (stdout logging is
+# dev-only and not intended for service use).
+
+[Install]
+WantedBy=default.target

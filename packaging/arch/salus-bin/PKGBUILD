@@ -1,0 +1,60 @@
+# Maintainer: Jason Ozias <jason.g.ozias@gmail.com>
+
+pkgname=salus-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Local secret store guarded by Shamir secret shares and AES-256-GCM encryption (pre-compiled MUSL static binaries)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/rustyhorde/salus"
+license=('MIT' 'Apache-2.0')
+provides=('salus')
+conflicts=('salus')
+depends=()
+makedepends=()
+
+_base="https://github.com/rustyhorde/salus/releases/download/v${pkgver}"
+
+source=("${_base}/dist-salus.tar.gz")
+source_x86_64=("salusd-x86_64::${_base}/salusd-x86_64-unknown-linux-musl"
+               "salusc-x86_64::${_base}/salusc-x86_64-unknown-linux-musl")
+source_aarch64=("salusd-aarch64::${_base}/salusd-aarch64-unknown-linux-musl"
+                "salusc-aarch64::${_base}/salusc-aarch64-unknown-linux-musl")
+sha256sums=('SKIP')
+sha256sums_x86_64=('SKIP' 'SKIP')
+sha256sums_aarch64=('SKIP' 'SKIP')
+
+package() {
+    # Binaries (per-arch static MUSL)
+    install -Dm755 "salusd-${CARCH}" "$pkgdir/usr/bin/salusd"
+    install -Dm755 "salusc-${CARCH}" "$pkgdir/usr/bin/salusc"
+
+    # Man pages
+    install -Dm644 salusd/salusd.1 "$pkgdir/usr/share/man/man1/salusd.1"
+    install -Dm644 salusc/salusc.1 "$pkgdir/usr/share/man/man1/salusc.1"
+
+    # Shell completions
+    install -Dm644 salusd/salusd.bash \
+        "$pkgdir/usr/share/bash-completion/completions/salusd"
+    install -Dm644 salusc/salusc.bash \
+        "$pkgdir/usr/share/bash-completion/completions/salusc"
+    install -Dm644 salusd/_salusd \
+        "$pkgdir/usr/share/zsh/site-functions/_salusd"
+    install -Dm644 salusc/_salusc \
+        "$pkgdir/usr/share/zsh/site-functions/_salusc"
+    install -Dm644 salusd/salusd.fish \
+        "$pkgdir/usr/share/fish/vendor_completions.d/salusd.fish"
+    install -Dm644 salusc/salusc.fish \
+        "$pkgdir/usr/share/fish/vendor_completions.d/salusc.fish"
+
+    # systemd user unit for the daemon
+    install -Dm644 salusd/salusd.service \
+        "$pkgdir/usr/lib/systemd/user/salusd.service"
+
+    # Example config
+    install -Dm644 salusd/salusd.toml.example \
+        "$pkgdir/usr/share/doc/$pkgname/examples/salusd.toml.example"
+
+    # Licenses
+    install -Dm644 salusd/LICENSE-MIT    "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 salusd/LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

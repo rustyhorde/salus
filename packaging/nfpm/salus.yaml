@@ -1,0 +1,65 @@
+# nfpm package configuration for salus (x86_64)
+# Build with: VERSION=<ver> nfpm package --config packaging/nfpm/salus.yaml --packager deb|rpm --target release-assets/
+name: salus
+arch: amd64
+version: ${VERSION}
+version_schema: semver
+section: utils
+maintainer: Jason Ozias <jason.g.ozias@gmail.com>
+description: |
+  Local secret store.
+  A key/value store whose master encryption key is split into Shamir secret
+  shares and never persisted. Ships the salusd daemon and the salusc client.
+homepage: https://github.com/rustyhorde/salus
+license: MIT OR Apache-2.0
+
+deb:
+  compression: xz
+
+rpm:
+  compression: xz
+
+contents:
+  # Binaries
+  - src: salusd-x86_64-unknown-linux-musl
+    dst: /usr/bin/salusd
+    file_info:
+      mode: 0755
+  - src: salusc-x86_64-unknown-linux-musl
+    dst: /usr/bin/salusc
+    file_info:
+      mode: 0755
+
+  # Man pages
+  - src: dist/salusd/salusd.1
+    dst: /usr/share/man/man1/salusd.1
+  - src: dist/salusc/salusc.1
+    dst: /usr/share/man/man1/salusc.1
+
+  # Shell completions
+  - src: dist/salusd/salusd.bash
+    dst: /usr/share/bash-completion/completions/salusd
+  - src: dist/salusc/salusc.bash
+    dst: /usr/share/bash-completion/completions/salusc
+  - src: dist/salusd/_salusd
+    dst: /usr/share/zsh/vendor-completions/_salusd
+  - src: dist/salusc/_salusc
+    dst: /usr/share/zsh/vendor-completions/_salusc
+  - src: dist/salusd/salusd.fish
+    dst: /usr/share/fish/vendor_completions.d/salusd.fish
+  - src: dist/salusc/salusc.fish
+    dst: /usr/share/fish/vendor_completions.d/salusc.fish
+
+  # Systemd user service
+  - src: dist/salusd/salusd.service
+    dst: /usr/lib/systemd/user/salusd.service
+
+  # Example configuration
+  - src: dist/salusd/salusd.toml.example
+    dst: /usr/share/doc/salus/examples/salusd.toml.example
+
+  # Licenses
+  - src: dist/salusd/LICENSE-MIT
+    dst: /usr/share/doc/salus/LICENSE-MIT
+  - src: dist/salusd/LICENSE-APACHE
+    dst: /usr/share/doc/salus/LICENSE-APACHE

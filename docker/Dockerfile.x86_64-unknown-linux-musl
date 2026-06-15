@@ -1,0 +1,19 @@
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# salus links aws-lc-sys (via aws-lc-rs), whose build script compiles C with
+# cmake. The cross base image already provides the x86_64 musl cross toolchain;
+# we only add the build tooling aws-lc-sys needs (cmake + perl for its codegen,
+# plus a C/C++ toolchain).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        cmake perl pkg-config clang && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Point aws-lc-sys / cc-rs at the musl cross compiler so the static archive uses
+# the MUSL ABI.
+ENV CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc \
+    CXX_x86_64_unknown_linux_musl=x86_64-linux-musl-g++ \
+    AR_x86_64_unknown_linux_musl=x86_64-linux-musl-ar

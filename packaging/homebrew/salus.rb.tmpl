@@ -1,0 +1,57 @@
+class Salus < Formula
+  desc "Local secret store guarded by Shamir secret shares and AES-256-GCM encryption"
+  homepage "https://github.com/rustyhorde/salus"
+  license any_of: ["MIT", "Apache-2.0"]
+  version "PKGVER"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/rustyhorde/salus/releases/download/vPKGVER/salus-aarch64-apple-darwin.tar.gz"
+      sha256 "SALUS_MACOS_SHA256"
+    end
+  end
+
+  def install
+    bin.install "salusd/salusd"
+    bin.install "salusc/salusc"
+
+    bash_completion.install "salusd/salusd.bash" => "salusd"
+    bash_completion.install "salusc/salusc.bash" => "salusc"
+    zsh_completion.install "salusd/_salusd"
+    zsh_completion.install "salusc/_salusc"
+    fish_completion.install "salusd/salusd.fish"
+    fish_completion.install "salusc/salusc.fish"
+
+    man1.install "salusd/salusd.1"
+    man1.install "salusc/salusc.1"
+
+    (etc/"salusd").install "salusd/salusd.toml.example" if File.exist?("salusd/salusd.toml.example")
+  end
+
+  service do
+    run [opt_bin/"salusd"]
+    keep_alive true
+    log_path var/"log/salusd.log"
+    error_log_path var/"log/salusd.err"
+  end
+
+  def caveats
+    <<~EOS
+      salusd holds the reconstructed key only in memory and clears it after
+      key_timeout seconds. After (re)starting the daemon you must unlock it:
+
+        brew services start salus      # do NOT use sudo
+        salusc shares                  # first-time init — record the shares
+        salusc unlock                  # reconstruct the key in the daemon
+
+      Copy the example config to get started:
+        mkdir -p "$HOME/Library/Application Support/salusd"
+        cp #{etc}/salusd/salusd.toml.example "$HOME/Library/Application Support/salusd/salusd.toml"
+    EOS
+  end
+
+  test do
+    system bin/"salusd", "--version"
+    system bin/"salusc", "--version"
+  end
+end

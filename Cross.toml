@@ -1,0 +1,5 @@
+[target.aarch64-unknown-linux-musl]
+image = "salus-cross-aarch64"
+
+[target.x86_64-unknown-linux-musl]
+image = "salus-cross-x86_64"

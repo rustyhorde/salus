@@ -7,6 +7,12 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+# Forwards to the workspace crates' `unstable` feature so the fuzz targets and
+# regression tests can be exercised against unstable code paths. Currently a
+# no-op (those `unstable` features are empty), wired up for future use.
+unstable = ["libsalus/unstable", "salusd/unstable"]
+
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
 libfuzzer-sys = "0.4.13"

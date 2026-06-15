@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 
-members = ["libsalus", "salusc", "salusd"]
+members = ["libsalus", "salusc", "salusd", "xtask"]
 
 [workspace.dependencies]
 anyhow = "1.0.102"
@@ -9,6 +9,8 @@ aws-lc-rs = "1.17.0"
 bincode-next = "3.0.0-rc.15"
 bon = "3.9.3"
 clap = { version = "4.6.1", features = ["derive"] }
+clap_complete = "4.6.5"
+clap_mangen = "0.3.0"
 config = "0.15.23"
 dirs2 = "3.0.1"
 getset = "0.1.7"

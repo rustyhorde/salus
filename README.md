@@ -267,6 +267,56 @@ generic `read_value` / `write_value` helpers.
 - **The client holds no key material and performs no crypto** — all crypto and
   storage live in the daemon.
 
+## Installation
+
+Beyond `cargo install`, releases are distributed through several channels:
+
+- **crates.io** — `cargo install salusd` and `cargo install salusc`.
+- **Arch (AUR)** — `salus` (builds from source) or `salus-bin` (prebuilt static
+  MUSL binaries). Both install the `salusd` daemon, the `salusc` client, shell
+  completions, man pages, and a systemd user unit.
+- **Debian / RPM** — a signed apt/rpm repository (see `rustyhorde/salus-packages`).
+- **Homebrew** — `brew tap rustyhorde/salus && brew install salus`.
+
+### Running salusd as a systemd user service
+
+The `salus`/`salus-bin` packages install `salusd.service` to
+`/usr/lib/systemd/user/`. Enable it per-user (no `sudo`):
+
+```bash
+systemctl --user enable --now salusd
+```
+
+The daemon holds the reconstructed key only in memory and clears it after
+`key_timeout`, so after every (re)start you must unlock it again:
+
+```bash
+salusc shares   # first-time init only — records the shares
+salusc unlock   # reconstruct the key in the daemon's memory
+```
+
+## Releasing
+
+Releases are driven by a git tag push and handled by
+`.github/workflows/release.yml`:
+
+1. Bump the version in `libsalus/`, `salusd/`, and `salusc/` `Cargo.toml`
+   (and the `libsalus` dependency version in `salusd`/`salusc`), then commit.
+2. Tag and push: `git tag vX.Y.Z && git push --tags`. A `vX.Y.Z-rc*` tag only
+   exercises the build jobs (publishing is skipped) for a dry run.
+3. On a full `vX.Y.Z` tag the workflow builds static MUSL + macOS binaries,
+   creates the GitHub release, publishes the crates to crates.io (in dependency
+   order: `libsalus` → `salusd` → `salusc`), updates the AUR PKGBUILDs,
+   publishes the signed apt/rpm repository, and updates the Homebrew tap.
+
+`cargo xtask dist salusd|salusc` regenerates the shell completions, man pages,
+licenses, and (for `salusd`) the systemd unit and example config under `dist/`.
+
+The workflow requires these repository secrets: `CRATES_IO_TOKEN` (crates.io),
+`AUR_SSH_PRIVATE_KEY` (AUR), `HOMEBREW_TAP_TOKEN` (Homebrew tap),
+`PACKAGES_REPO_TOKEN` + `PACKAGES_GPG_PRIVATE_KEY` + `PACKAGES_GPG_KEY_ID`
+(signed apt/rpm repo).
+
 ## License
 
 Licensed under either of
