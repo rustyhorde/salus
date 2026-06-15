@@ -117,20 +117,27 @@ where
         let store_c = self.store.clone();
         let key_timeout = self.key_timeout;
         match self.unlock_store(|store| -> Result<Response> {
-            let res = store.unlock();
+            let response = store.unlock()?;
 
-            if res.is_ok() {
-                // If we successfully unlocked the key, set a timer to clear it from memory after `key_timeout` seconds.
-                // This is a basic security measure to limit the time the key is in memory.
+            if matches!(response, Response::Success) {
+                // We successfully unlocked the key, so set a timer to clear it from
+                // memory after `key_timeout` seconds. The timer captures the current
+                // unlock generation; a later unlock bumps the generation, so this
+                // timer firing becomes a no-op and cannot clear a fresher key.
+                let generation = store.key_generation();
                 let interval = sleep(Duration::from_secs(key_timeout));
                 let store_c = store_c.clone();
                 let _blah = spawn(async move {
                     interval.await;
                     warn!("Clearing unlocked key from memory");
-                    store_c.lock().unwrap().clear_key();
+                    let mut store = match store_c.lock() {
+                        Ok(store) => store,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    store.clear_key_if_generation(generation);
                 });
             }
-            res
+            Ok(response)
         }) {
             Ok(response) => {
                 self.response(response).await?;

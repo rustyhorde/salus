@@ -1,0 +1,45 @@
+on:
+  workflow_dispatch:
+  # Trigger the workflow on push to master or any pull request
+  # Ignore all tags
+  push:
+    branches:
+      - master
+    tags-ignore:
+      - "*"
+  pull_request:
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    - cron: "22 3 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+name: 💣 Audit 💣
+
+jobs:
+  audit-check:
+    runs-on: ubuntu-latest
+    name: 💣 Audit 💣
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: ✅ Checkout ✅
+        uses: Wandalen/wretry.action@71a909ebf09f3ffdc6f42a17bd54ecb43481da49 # v3.8.0
+        with:
+          action: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+          attempt_limit: 3
+          attempt_delay: 30000
+
+      - name: 💣 Audit 💣
+        # v0
+        uses: rustyhorde/audit-check@f7875ca3428c17cce4d5a141ea1128568db8b6c2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deny: warnings
+          create_issue: ${{ github.event_name != 'pull_request' }}

@@ -820,6 +820,7 @@ dependencies = [
  "rustversion",
  "ssss",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -1294,6 +1295,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-subscriber-init",
+ "zeroize",
 ]
 
 [[package]]

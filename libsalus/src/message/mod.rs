@@ -107,6 +107,8 @@ pub enum Response {
     Error(String),
     /// Success
     Success,
+    /// The store could not be unlocked with the provided shares
+    UnlockFailed,
     /// Shares
     Shares(Shares),
     /// The share store is already initialized
@@ -114,7 +116,7 @@ pub enum Response {
     /// The threshold
     Threshold(u8),
     /// The value read from the store
-    Value(Option<String>),
+    Value(Option<Vec<u8>>),
     /// The key was not found in the store
     KeyNotFound,
     /// The keys that matched the regex

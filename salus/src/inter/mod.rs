@@ -106,7 +106,25 @@ impl Inter {
             let message = Action::Share(share);
             let _unused = self.send(message).await?;
         }
-        let _unused = self.send(Action::Unlock).await?;
+        match self.send(Action::Unlock).await? {
+            Response::Success => {
+                println!("{}", "Store unlocked".green().bold());
+            }
+            Response::UnlockFailed => {
+                eprintln!(
+                    "{}",
+                    "Unlock failed: the provided shares did not reconstruct the key"
+                        .red()
+                        .bold()
+                );
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while unlocking: {error}");
+            }
+            _ => {
+                eprintln!("Unexpected response from salusd");
+            }
+        }
         Ok(())
     }
 
@@ -124,10 +142,23 @@ impl Inter {
             let message = Action::Read(key.clone());
             match self.send(message).await? {
                 Response::Value(value) => {
-                    if let Some(val) = value {
-                        let value_style = style(val).with(Color::Green).bold();
-                        println!("{}", "Value: ".green());
-                        println!("{value_style}");
+                    if let Some(bytes) = value {
+                        match String::from_utf8(bytes) {
+                            Ok(val) => {
+                                let value_style = style(val).with(Color::Green).bold();
+                                println!("{}", "Value: ".green());
+                                println!("{value_style}");
+                            }
+                            Err(e) => {
+                                let len = e.as_bytes().len();
+                                let binary_style = style(format!(
+                                    "Value for '{key}' is {len} bytes of non-UTF-8 binary data"
+                                ))
+                                .with(Color::Yellow)
+                                .bold();
+                                println!("{binary_style}");
+                            }
+                        }
                     } else {
                         let not_found_style =
                             style(format!("No value found for '{key}'")).red().bold();

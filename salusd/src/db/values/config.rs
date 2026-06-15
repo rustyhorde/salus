@@ -7,9 +7,7 @@
 // modified, or distributed except according to those terms.
 
 use anyhow::Result;
-use bincode_next::{
-    Decode, Encode, config::standard, decode_from_slice, encode_into_slice, encode_to_vec,
-};
+use bincode_next::{Decode, Encode, config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
 use getset::Getters;
 use redb::{TypeName, Value};
@@ -58,9 +56,7 @@ impl Value for ConfigVal {
     where
         Self: 'b,
     {
-        let mut bytes = [0u8; 100];
-        let length = encode_into_slice(value, &mut bytes, standard()).unwrap();
-        bytes[..length].to_vec()
+        encode_to_vec(value, standard()).expect("ConfigVal encode")
     }
 
     fn type_name() -> TypeName {

@@ -9,6 +9,7 @@
 use anyhow::Result;
 use ssss::{SsssConfig, unlock};
 use tracing::trace;
+use zeroize::Zeroizing;
 
 /// Generate a new key and split it into shares using Shamir's Secret Sharing Scheme.
 ///
@@ -28,8 +29,8 @@ pub fn gen_shares(config: &SsssConfig, key: &[u8; 32]) -> Result<Vec<String>> {
 ///
 ///  * If the unlocking process fails, an error is returned.
 ///
-pub fn unlock_key(shares: &[String]) -> Result<Vec<u8>> {
-    unlock(shares)
+pub fn unlock_key(shares: &[String]) -> Result<Zeroizing<Vec<u8>>> {
+    Ok(Zeroizing::new(unlock(shares)?))
 }
 
 #[cfg(test)]
@@ -69,19 +70,19 @@ mod test {
         let mut rng = rng();
         remove_random_entry(&mut rng, &mut shares);
         assert_eq!(shares.len(), 4);
-        assert_eq!(unlock_key(&shares)?, unlocked);
+        assert_eq!(*unlock_key(&shares)?, *unlocked);
 
         // Remove a random share from `shares` and check that 3 shares can unlock
         // the secret
         remove_random_entry(&mut rng, &mut shares);
         assert_eq!(shares.len(), 3);
-        assert_eq!(unlock_key(&shares)?, unlocked);
+        assert_eq!(*unlock_key(&shares)?, *unlocked);
 
         // Remove a random share from `shares` and check that 2 shares *CANNOT* unlock
         // the secret
         remove_random_entry(&mut rng, &mut shares);
         assert_eq!(shares.len(), 2);
-        assert_ne!(unlock_key(&shares)?, unlocked);
+        assert_ne!(*unlock_key(&shares)?, *unlocked);
 
         Ok(())
     }
