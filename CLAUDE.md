@@ -23,6 +23,8 @@ cargo run -p salusd              # run the daemon (foreground)
 cargo run -p salus -- shares     # run the client; args after `--`
 ```
 
+**Final verification.** Always run `scripts/run_all.fish --no-fuzz` as the final verification step before considering a change complete.
+
 ### Running the system end-to-end
 
 1. Start the daemon: `cargo run -p salusd -- -e -v` (`-e` enables stdout logging — only for foreground/dev, not as a service; `-v` raises verbosity).

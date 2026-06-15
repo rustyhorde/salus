@@ -338,11 +338,7 @@ impl ShareStore {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        process,
-        sync::{Arc, Mutex},
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::sync::{Arc, Mutex};
 
     use libsalus::Response;
     use redb::Database;
@@ -353,13 +349,12 @@ mod test {
     };
 
     fn temp_store() -> ShareStore {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("salus-test-{}-{nanos}.redb", process::id()));
-        let db = Database::create(&path).unwrap();
+        // Each test gets its own isolated in-memory database. This avoids the
+        // filesystem entirely, so parallel tests can never collide on a shared
+        // path and trigger redb's `DatabaseAlreadyOpen`.
+        let db = Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .unwrap();
         ShareStore::builder().redb(Arc::new(Mutex::new(db))).build()
     }
 
