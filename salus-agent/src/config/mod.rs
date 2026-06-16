@@ -197,6 +197,7 @@ fn config_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
+    use anyhow::Result;
     use config::{Config, ConfigError, Map, Source, Value, ValueKind};
 
     use super::{
@@ -270,26 +271,27 @@ mod test {
     }
 
     #[test]
-    fn load_layers_file_env_and_cli() {
+    fn load_layers_file_env_and_cli() -> Result<()> {
         // Point at a non-existent config file so the (optional) file source is
         // skipped, then let the CLI source supply an explicitly-set flag.
         let cli = TestCli {
             config_path: Some("/nonexistent/salus-agent-test.toml".to_string()),
             socket_path: Some("/tmp/agent-test.sock".to_string()),
         };
-        let cfg: ConfigSalusAgent = load(&cli, &cli).unwrap();
+        let cfg: ConfigSalusAgent = load(&cli, &cli)?;
         // The CLI socket override wins; everything else falls back to defaults.
         assert_eq!(cfg.socket_path().as_deref(), Some("/tmp/agent-test.sock"));
         assert_eq!(
             cfg.passphrase_cache_timeout(),
             DEFAULT_PASSPHRASE_CACHE_TIMEOUT
         );
+        Ok(())
     }
 
     #[test]
-    fn missing_fields_fall_back_to_defaults() {
-        let config = Config::builder().build().unwrap();
-        let cfg: ConfigSalusAgent = config.try_deserialize().unwrap();
+    fn missing_fields_fall_back_to_defaults() -> Result<()> {
+        let config = Config::builder().build()?;
+        let cfg: ConfigSalusAgent = config.try_deserialize()?;
         assert_eq!(
             cfg.passphrase_cache_timeout(),
             DEFAULT_PASSPHRASE_CACHE_TIMEOUT
@@ -297,10 +299,11 @@ mod test {
         assert_eq!(cfg.verbose(), 0);
         assert!(!cfg.enable_std_output());
         assert!(cfg.socket_path().is_none());
+        Ok(())
     }
 
     #[test]
-    fn env_separators_map_flat_and_nested_fields() {
+    fn env_separators_map_flat_and_nested_fields() -> Result<()> {
         let mut map = Map::new();
         let _old = map.insert(
             "SALUSAGENT_PASSPHRASE_CACHE_TIMEOUT".to_string(),
@@ -312,10 +315,10 @@ mod test {
         );
         let config = Config::builder()
             .add_source(env_source("SALUSAGENT").source(Some(map)))
-            .build()
-            .unwrap();
-        let cfg: ConfigSalusAgent = config.try_deserialize().unwrap();
+            .build()?;
+        let cfg: ConfigSalusAgent = config.try_deserialize()?;
         assert_eq!(cfg.passphrase_cache_timeout(), 99);
         assert!(cfg.tracing().with_target());
+        Ok(())
     }
 }

@@ -216,6 +216,22 @@
 )]
 // clippy lints
 #![cfg_attr(nightly, deny(clippy::all, clippy::pedantic))]
+// no-panic restriction lints: handle every error, never panic (see CLAUDE.md)
+#![cfg_attr(
+    nightly,
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::get_unwrap,
+        clippy::unwrap_in_result,
+    )
+)]
 // rustdoc lints
 #![cfg_attr(
     nightly,

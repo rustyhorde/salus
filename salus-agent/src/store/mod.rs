@@ -182,7 +182,7 @@ impl AgentState {
 
 #[cfg(test)]
 mod test {
-    use anyhow::Result;
+    use anyhow::{Context, Result, bail};
     use zeroize::Zeroizing;
 
     use super::{AgentState, EnrolledSet, UnsealResult};
@@ -213,12 +213,14 @@ mod test {
     }
 
     #[test]
-    fn status_reports_auto_count() {
+    fn status_reports_auto_count() -> Result<()> {
         let st = state(vec![("a", enrolled(&["s0", "s1"], None))]);
         let status = st.status();
         assert_eq!(status.len(), 1);
-        assert_eq!(status[0].name, "a");
-        assert_eq!(status[0].auto_count, 2);
+        let first = status.first().context("expected one status entry")?;
+        assert_eq!(first.name, "a");
+        assert_eq!(first.auto_count, 2);
+        Ok(())
     }
 
     #[test]
@@ -246,43 +248,48 @@ mod test {
                 assert_eq!(value, "cached-share");
                 assert!(arm_timer.is_none());
             }
-            _ => panic!("expected a cached share result"),
+            _ => bail!("expected a cached share result"),
         }
         Ok(())
     }
 
     #[test]
-    fn clear_cache_only_on_matching_generation() {
+    fn clear_cache_only_on_matching_generation() -> Result<()> {
         let mut st = state(vec![("a", enrolled(&["s0"], Some("cached")))]);
         st.clear_cache_if_generation("a", 99);
-        assert!(st.sets["a"].cached_final.is_some());
+        assert!(st.sets.get("a").context("set a")?.cached_final.is_some());
         st.clear_cache_if_generation("a", 0);
-        assert!(st.sets["a"].cached_final.is_none());
+        assert!(st.sets.get("a").context("set a")?.cached_final.is_none());
+        Ok(())
     }
 
     #[test]
-    fn lock_one_clears_cache_and_bumps_generation() {
+    fn lock_one_clears_cache_and_bumps_generation() -> Result<()> {
         let mut st = state(vec![
             ("a", enrolled(&["s0"], Some("cached"))),
             ("b", enrolled(&["s0"], Some("cached"))),
         ]);
         st.lock(Some("a"));
-        assert!(st.sets["a"].cached_final.is_none());
-        assert_eq!(st.sets["a"].cache_generation, 1);
+        let a = st.sets.get("a").context("set a")?;
+        assert!(a.cached_final.is_none());
+        assert_eq!(a.cache_generation, 1);
         // The other set is untouched.
-        assert!(st.sets["b"].cached_final.is_some());
-        assert_eq!(st.sets["b"].cache_generation, 0);
+        let b = st.sets.get("b").context("set b")?;
+        assert!(b.cached_final.is_some());
+        assert_eq!(b.cache_generation, 0);
+        Ok(())
     }
 
     #[test]
-    fn lock_all_clears_every_cache() {
+    fn lock_all_clears_every_cache() -> Result<()> {
         let mut st = state(vec![
             ("a", enrolled(&["s0"], Some("cached"))),
             ("b", enrolled(&["s0"], Some("cached"))),
         ]);
         st.lock(None);
-        assert!(st.sets["a"].cached_final.is_none());
-        assert!(st.sets["b"].cached_final.is_none());
+        assert!(st.sets.get("a").context("set a")?.cached_final.is_none());
+        assert!(st.sets.get("b").context("set b")?.cached_final.is_none());
+        Ok(())
     }
 
     #[test]
@@ -312,12 +319,12 @@ mod test {
                 assert_eq!(value, "final");
                 assert_eq!(arm_timer, Some(1));
             }
-            _ => panic!("expected a fresh share result"),
+            _ => bail!("expected a fresh share result"),
         }
         // The next unseal is served from the cache, so it does not re-arm.
         match st.unseal("alpha", "pass", 3600)? {
             UnsealResult::Share { arm_timer, .. } => assert!(arm_timer.is_none()),
-            _ => panic!("expected a cached share result"),
+            _ => bail!("expected a cached share result"),
         }
         Ok(())
     }
@@ -338,7 +345,7 @@ mod test {
                 assert_eq!(value, "final");
                 assert!(arm_timer.is_none());
             }
-            _ => panic!("expected a share result"),
+            _ => bail!("expected a share result"),
         }
         Ok(())
     }

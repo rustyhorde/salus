@@ -117,6 +117,7 @@ impl PathDefaults for Cli {
 
 #[cfg(test)]
 mod test {
+    use anyhow::Result;
     use clap::Parser;
     use config::Source;
 
@@ -124,56 +125,61 @@ mod test {
     use crate::config::PathDefaults;
 
     #[test]
-    fn collect_omits_unset_flags() {
-        let cli = Cli::try_parse_from(["salus-agent"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_omits_unset_flags() -> Result<()> {
+        let cli = Cli::try_parse_from(["salus-agent"])?;
+        let map = cli.collect()?;
         assert!(
             map.is_empty(),
             "default Cli should emit nothing, got {map:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn collect_includes_set_flags() {
-        let cli = Cli::try_parse_from(["salus-agent", "-vv", "-e", "-s", "/tmp/a.sock"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_includes_set_flags() -> Result<()> {
+        let cli = Cli::try_parse_from(["salus-agent", "-vv", "-e", "-s", "/tmp/a.sock"])?;
+        let map = cli.collect()?;
         assert!(map.contains_key("verbose"));
         assert!(map.contains_key("enable_std_output"));
         assert!(map.contains_key("socket_path"));
         assert!(!map.contains_key("quiet"));
+        Ok(())
     }
 
     #[test]
-    fn env_prefix_strips_hyphen() {
-        let cli = Cli::try_parse_from(["salus-agent"]).unwrap();
+    fn env_prefix_strips_hyphen() -> Result<()> {
+        let cli = Cli::try_parse_from(["salus-agent"])?;
         assert_eq!(cli.env_prefix(), "SALUSAGENT");
+        Ok(())
     }
 
     #[test]
-    fn collect_includes_quiet() {
-        let cli = Cli::try_parse_from(["salus-agent", "-qq"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_includes_quiet() -> Result<()> {
+        let cli = Cli::try_parse_from(["salus-agent", "-qq"])?;
+        let map = cli.collect()?;
         assert!(map.contains_key("quiet"));
         assert!(!map.contains_key("verbose"));
+        Ok(())
     }
 
     #[test]
-    fn path_defaults_expose_overrides() {
+    fn path_defaults_expose_overrides() -> Result<()> {
         let cli =
-            Cli::try_parse_from(["salus-agent", "-c", "/tmp/cfg.toml", "-t", "/tmp/trace.log"])
-                .unwrap();
+            Cli::try_parse_from(["salus-agent", "-c", "/tmp/cfg.toml", "-t", "/tmp/trace.log"])?;
         assert_eq!(cli.app_name(), "salus-agent");
         assert_eq!(cli.config_absolute_path().as_deref(), Some("/tmp/cfg.toml"));
         assert_eq!(
             cli.tracing_absolute_path().as_deref(),
             Some("/tmp/trace.log")
         );
+        Ok(())
     }
 
     #[test]
-    fn path_defaults_default_to_none() {
-        let cli = Cli::try_parse_from(["salus-agent"]).unwrap();
+    fn path_defaults_default_to_none() -> Result<()> {
+        let cli = Cli::try_parse_from(["salus-agent"])?;
         assert!(cli.config_absolute_path().is_none());
         assert!(cli.tracing_absolute_path().is_none());
+        Ok(())
     }
 }

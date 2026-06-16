@@ -120,6 +120,7 @@ fn log_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
+    use anyhow::Result;
     use config::{Config, FileFormat};
     use tracing::level_filters::LevelFilter;
 
@@ -145,16 +146,15 @@ mod test {
     }
 
     #[test]
-    fn directives_appends_configured_directives() {
+    fn directives_appends_configured_directives() -> Result<()> {
         let cfg: ConfigSalusAgent = Config::builder()
             .add_source(config::File::from_str(
                 "[tracing]\ndirectives = \"mycrate=debug\"\n",
                 FileFormat::Toml,
             ))
-            .build()
-            .unwrap()
-            .try_deserialize()
-            .unwrap();
+            .build()?
+            .try_deserialize()?;
         assert_eq!(directives(&cfg, LevelFilter::INFO), "info,mycrate=debug");
+        Ok(())
     }
 }

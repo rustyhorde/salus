@@ -125,6 +125,7 @@ impl PathDefaults for Cli {
 
 #[cfg(test)]
 mod test {
+    use anyhow::Result;
     use clap::Parser;
     use config::{Config, Map, Source};
 
@@ -132,51 +133,53 @@ mod test {
     use crate::config::{ConfigSalusd, env_source};
 
     #[test]
-    fn collect_omits_unset_flags() {
-        let cli = Cli::try_parse_from(["salusd"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_omits_unset_flags() -> Result<()> {
+        let cli = Cli::try_parse_from(["salusd"])?;
+        let map = cli.collect()?;
         assert!(
             map.is_empty(),
             "default Cli should emit nothing, got {map:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn collect_includes_set_flags() {
-        let cli = Cli::try_parse_from(["salusd", "-vv", "-e", "-s", "/tmp/s.sock"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_includes_set_flags() -> Result<()> {
+        let cli = Cli::try_parse_from(["salusd", "-vv", "-e", "-s", "/tmp/s.sock"])?;
+        let map = cli.collect()?;
         assert!(map.contains_key("verbose"));
         assert!(map.contains_key("enable_std_output"));
         assert!(map.contains_key("socket_path"));
         assert!(!map.contains_key("quiet"));
+        Ok(())
     }
 
     #[test]
-    fn cli_default_does_not_clobber_env_verbose() {
+    fn cli_default_does_not_clobber_env_verbose() -> Result<()> {
         let mut env = Map::new();
         let _old = env.insert("SALUSD_VERBOSE".to_string(), "3".to_string());
         // No `-v` on the command line, so the CLI source must not override env.
-        let cli = Cli::try_parse_from(["salusd"]).unwrap();
+        let cli = Cli::try_parse_from(["salusd"])?;
         let config = Config::builder()
             .add_source(env_source("SALUSD").source(Some(env)))
             .add_source(cli)
-            .build()
-            .unwrap();
-        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+            .build()?;
+        let cfg: ConfigSalusd = config.try_deserialize()?;
         assert_eq!(cfg.verbose(), 3);
+        Ok(())
     }
 
     #[test]
-    fn explicit_cli_overrides_env_verbose() {
+    fn explicit_cli_overrides_env_verbose() -> Result<()> {
         let mut env = Map::new();
         let _old = env.insert("SALUSD_VERBOSE".to_string(), "3".to_string());
-        let cli = Cli::try_parse_from(["salusd", "-v"]).unwrap();
+        let cli = Cli::try_parse_from(["salusd", "-v"])?;
         let config = Config::builder()
             .add_source(env_source("SALUSD").source(Some(env)))
             .add_source(cli)
-            .build()
-            .unwrap();
-        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+            .build()?;
+        let cfg: ConfigSalusd = config.try_deserialize()?;
         assert_eq!(cfg.verbose(), 1);
+        Ok(())
     }
 }

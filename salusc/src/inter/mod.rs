@@ -157,7 +157,7 @@ impl Inter {
             for i in 0..threshold {
                 let share_in = scanpw!(
                     "{}",
-                    style(format!("Enter share {}/{threshold}: ", i + 1)).green()
+                    style(format!("Enter share {}/{threshold}: ", i.saturating_add(1))).green()
                 );
                 let share = Share::builder().share(share_in).build();
                 let message = Action::Share(share);
@@ -205,8 +205,10 @@ impl Inter {
 
         let set_name = match set {
             Some(name) => name,
-            None if sets.len() == 1 => sets[0].name.clone(),
-            None => choose_set(&sets)?,
+            None => match sets.first() {
+                Some(only) if sets.len() == 1 => only.name.clone(),
+                _ => choose_set(&sets)?,
+            },
         };
 
         let mut shares = match self
@@ -308,7 +310,7 @@ impl Inter {
             for i in 0..threshold {
                 let share = scanpw!(
                     "{}",
-                    style(format!("Enter share {}/{threshold}: ", i + 1)).green()
+                    style(format!("Enter share {}/{threshold}: ", i.saturating_add(1))).green()
                 );
                 shares.push(share);
             }
@@ -532,15 +534,15 @@ fn parse_unlock_timeout(duration: Option<&str>) -> UnlockTimeout {
 fn choose_set(sets: &[SetInfo]) -> Result<String> {
     println!("{}", "Multiple enrolled sets are available:".green().bold());
     for (idx, info) in sets.iter().enumerate() {
-        println!("  {}) {}", idx + 1, info.name);
+        println!("  {}) {}", idx.saturating_add(1), info.name);
     }
     loop {
         print!("Select a set [1-{}]: ", sets.len());
         stdout().flush()?;
         let mut line = String::new();
         let _read = stdin().read_line(&mut line)?;
-        match parse_set_choice(&line, sets.len()) {
-            Some(idx) => return Ok(sets[idx].name.clone()),
+        match parse_set_choice(&line, sets.len()).and_then(|idx| sets.get(idx)) {
+            Some(info) => return Ok(info.name.clone()),
             None => eprintln!("{}", "Invalid selection, try again".red()),
         }
     }
@@ -550,7 +552,7 @@ fn choose_set(sets: &[SetInfo]) -> Result<String> {
 /// is not a whole number in `1..=len`.
 fn parse_set_choice(line: &str, len: usize) -> Option<usize> {
     match line.trim().parse::<usize>() {
-        Ok(choice) if choice >= 1 && choice <= len => Some(choice - 1),
+        Ok(choice) if choice >= 1 && choice <= len => Some(choice.saturating_sub(1)),
         _ => None,
     }
 }

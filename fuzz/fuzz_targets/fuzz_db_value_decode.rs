@@ -8,10 +8,10 @@
 
 //! Fuzz target for the daemon's redb value deserialization.
 //!
-//! `ConfigVal` and `SalusVal` (`salusd/src/db/values/`) implement redb's
-//! infallible `Value::from_bytes`, which panicked on truncated or garbage bytes
-//! (an `.unwrap()` and an out-of-bounds nonce slice). The real parse now lives
-//! in fallible `try_from_bytes` helpers; this target drives both via the
+//! `ConfigVal` and `SalusVal` (`salusd/src/db/values/`) wrap their raw redb
+//! bytes verbatim, so `Value::from_bytes` is infallible and can never panic. The
+//! real fallible decode lives downstream: `ConfigVal::to_value` (bincode) and
+//! `SalusVal::nonce` (the 12-byte nonce split). This target drives both via the
 //! `salusd::fuzz` facades on arbitrary bytes to prove they return `Err` rather
 //! than panicking. redb only ever feeds `from_bytes` its own output, but a
 //! corrupted on-disk database could supply anything.

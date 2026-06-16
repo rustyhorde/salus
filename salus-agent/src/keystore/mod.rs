@@ -107,7 +107,11 @@ fn seal(plaintext: &str, passphrase: &str) -> Result<Vec<u8>> {
         .with_context(|| Error::NonceKeyGen)?;
     let mut in_out = plaintext.as_bytes().to_vec();
     let nonce = rnkey.seal_in_place_append_tag(Aad::empty(), &mut in_out)?;
-    let mut blob = Vec::with_capacity(SALT_LEN + NONCE_LEN + in_out.len());
+    let mut blob = Vec::with_capacity(
+        SALT_LEN
+            .saturating_add(NONCE_LEN)
+            .saturating_add(in_out.len()),
+    );
     blob.extend_from_slice(&salt);
     blob.extend_from_slice(nonce.as_ref());
     blob.extend_from_slice(&in_out);
@@ -197,14 +201,19 @@ pub fn enroll_full(
     if shares.len() < 2 {
         bail!("enrollment needs at least the threshold number of shares (>= 2)");
     }
-    let auto_count = u8::try_from(shares.len() - 1).context("too many shares to enroll")?;
+    // `shares.len() >= 2` is guaranteed above, so the final share is the last
+    // element and the automatic shares are everything before it.
+    let auto_len = shares.len().saturating_sub(1);
+    let auto_count = u8::try_from(auto_len).context("too many shares to enroll")?;
     let mut registry = read_registry()?;
     if registry.sets.iter().any(|r| r.name == name) && !force {
         bail!("a set named '{name}' is already enrolled; pass --force to replace it");
     }
 
-    let (auto, manual) = shares.split_at(shares.len() - 1);
-    let final_share = &manual[0];
+    let (auto, manual) = shares.split_at(auto_len);
+    let final_share = manual
+        .first()
+        .context("enrollment is missing its final (manual) share")?;
 
     if independent {
         for (i, share) in auto.iter().enumerate() {
@@ -388,7 +397,7 @@ pub fn load_sealed_blob(name: &str) -> Result<Option<Vec<u8>>> {
 
 #[cfg(test)]
 mod test {
-    use anyhow::Result;
+    use anyhow::{Context, Result};
 
     use super::{
         enroll_final_only, enroll_full, forget, forget_all, list_sets, load_auto_shares,
@@ -401,17 +410,19 @@ mod test {
     }
 
     #[test]
-    fn seal_unseal_round_trip() {
-        let blob = seal("share-value", "correct horse battery staple").unwrap();
-        let out = unseal(&blob, "correct horse battery staple").unwrap();
+    fn seal_unseal_round_trip() -> Result<()> {
+        let blob = seal("share-value", "correct horse battery staple")?;
+        let out = unseal(&blob, "correct horse battery staple")?;
         assert_eq!(out.as_deref(), Some("share-value"));
+        Ok(())
     }
 
     #[test]
-    fn wrong_passphrase_returns_none() {
-        let blob = seal("share-value", "right-passphrase").unwrap();
-        let out = unseal(&blob, "wrong-passphrase").unwrap();
+    fn wrong_passphrase_returns_none() -> Result<()> {
+        let blob = seal("share-value", "right-passphrase")?;
+        let out = unseal(&blob, "wrong-passphrase")?;
         assert!(out.is_none());
+        Ok(())
     }
 
     #[test]
@@ -436,14 +447,15 @@ mod test {
 
         let sets = list_sets()?;
         assert_eq!(sets.len(), 1);
-        assert_eq!(sets[0].name, "alpha");
-        assert_eq!(sets[0].auto_count, 2);
+        let alpha = sets.first().context("expected one enrolled set")?;
+        assert_eq!(alpha.name, "alpha");
+        assert_eq!(alpha.auto_count, 2);
         assert_eq!(shared_auto_count()?, Some(2));
 
         let auto = load_auto_shares("alpha")?;
         assert_eq!(auto, vec!["share-0".to_string(), "share-1".to_string()]);
 
-        let blob = load_sealed_blob("alpha")?.expect("sealed blob present");
+        let blob = load_sealed_blob("alpha")?.context("sealed blob present")?;
         assert_eq!(unseal(&blob, "pass")?.as_deref(), Some("share-2"));
         Ok(())
     }
@@ -473,8 +485,9 @@ mod test {
         enroll_full("delta", &shares(4), "pass2", false, true)?;
         let sets = list_sets()?;
         assert_eq!(sets.len(), 1);
-        assert_eq!(sets[0].auto_count, 3);
-        let blob = load_sealed_blob("delta")?.expect("sealed blob present");
+        let delta = sets.first().context("expected one enrolled set")?;
+        assert_eq!(delta.auto_count, 3);
+        let blob = load_sealed_blob("delta")?.context("sealed blob present")?;
         assert_eq!(unseal(&blob, "pass2")?.as_deref(), Some("share-3"));
         Ok(())
     }
@@ -487,7 +500,7 @@ mod test {
 
         let sets = list_sets()?;
         assert_eq!(sets.len(), 2);
-        let blob = load_sealed_blob("epsilon")?.expect("sealed blob present");
+        let blob = load_sealed_blob("epsilon")?.context("sealed blob present")?;
         assert_eq!(unseal(&blob, "secret")?.as_deref(), Some("final-share"));
         Ok(())
     }

@@ -6,39 +6,58 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use anyhow::{Result, bail};
-use bon::Builder;
-use getset::{CopyGetters, Getters};
+use anyhow::{Result, anyhow};
 use redb::{TypeName, Value};
 
-#[derive(Builder, Clone, CopyGetters, Debug, Getters)]
+/// A `salus_store` row: an AES-256-GCM nonce followed by its ciphertext.
+///
+/// `SalusVal` is a thin newtype over the raw `nonce || ciphertext` bytes, stored
+/// in `redb` verbatim. The infallible [`Value::from_bytes`] / [`Value::as_bytes`]
+/// hooks are therefore genuine no-op wraps/unwraps that can never panic on a
+/// corrupt database. Splitting the 12-byte nonce off the front is fallible (a
+/// truncated row has fewer than 12 bytes) and lives in [`SalusVal::nonce`] /
+/// [`SalusVal::ciphertext`], which are called where an `Err` can be propagated.
+#[derive(Clone, Debug)]
 pub(crate) struct SalusVal {
-    #[builder(into)]
-    #[getset(get_copy = "pub(crate)")]
-    nonce: [u8; 12],
-    #[builder(into)]
-    #[getset(get = "pub(crate)")]
-    ciphertext: Vec<u8>,
+    /// `nonce` (12 bytes) followed by the ciphertext.
+    raw: Vec<u8>,
 }
 
+/// Length of the AES-256-GCM nonce that prefixes every stored value.
+const NONCE_LEN: usize = 12;
+
 impl SalusVal {
-    /// Fallible counterpart to the infallible redb [`Value::from_bytes`] hook.
+    /// Build a `SalusVal` from a freshly-sealed nonce and ciphertext.
+    pub(crate) fn from_parts(nonce: [u8; NONCE_LEN], ciphertext: &[u8]) -> Self {
+        let mut raw = Vec::with_capacity(NONCE_LEN.saturating_add(ciphertext.len()));
+        raw.extend_from_slice(&nonce);
+        raw.extend_from_slice(ciphertext);
+        Self { raw }
+    }
+
+    /// Wrap raw stored bytes as a `SalusVal` without validating them.
     ///
-    /// redb only ever calls `from_bytes` on bytes it previously produced via
-    /// `as_bytes`, but a corrupted database (or a fuzzer) can supply fewer than
-    /// the 12 nonce bytes. Keeping the real parse here lets it return an `Err`
-    /// instead of panicking on the slice, so it can be exercised directly.
-    pub(crate) fn try_from_bytes(data: &[u8]) -> Result<SalusVal> {
-        let Some((nonce_bytes, ciphertext)) = data.split_at_checked(12) else {
-            bail!("SalusVal is malformed (need at least 12 nonce bytes)");
-        };
-        let nonce = nonce_bytes
-            .try_into()
-            .expect("split_at_checked(12) yields exactly 12 bytes");
-        Ok(SalusVal {
-            nonce,
-            ciphertext: ciphertext.to_vec(),
-        })
+    /// Infallible: validation (the 12-byte nonce split) is deferred to
+    /// [`SalusVal::nonce`] / [`SalusVal::ciphertext`].
+    pub(crate) fn from_raw_bytes(data: &[u8]) -> Self {
+        Self { raw: data.to_vec() }
+    }
+
+    /// Split the row into its nonce and ciphertext, erroring on a truncated row.
+    fn split(&self) -> Result<(&[u8; NONCE_LEN], &[u8])> {
+        self.raw
+            .split_first_chunk::<NONCE_LEN>()
+            .ok_or_else(|| anyhow!("SalusVal is malformed (need at least {NONCE_LEN} nonce bytes)"))
+    }
+
+    /// The 12-byte AES-256-GCM nonce.
+    pub(crate) fn nonce(&self) -> Result<[u8; NONCE_LEN]> {
+        Ok(*self.split()?.0)
+    }
+
+    /// The ciphertext following the nonce.
+    pub(crate) fn ciphertext(&self) -> Result<&[u8]> {
+        Ok(self.split()?.1)
     }
 }
 
@@ -49,7 +68,7 @@ impl Value for SalusVal {
         Self: 'a;
 
     type AsBytes<'a>
-        = Vec<u8>
+        = &'a [u8]
     where
         Self: 'a;
 
@@ -61,17 +80,14 @@ impl Value for SalusVal {
     where
         Self: 'a,
     {
-        Self::try_from_bytes(data).expect("SalusVal decode")
+        SalusVal::from_raw_bytes(data)
     }
 
     fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
     where
         Self: 'b,
     {
-        let mut bytes = Vec::with_capacity(12 + value.ciphertext.len());
-        bytes.extend_from_slice(&value.nonce);
-        bytes.extend_from_slice(&value.ciphertext);
-        bytes
+        value.raw.as_slice()
     }
 
     fn type_name() -> TypeName {
