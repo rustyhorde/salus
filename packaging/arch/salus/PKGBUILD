@@ -11,7 +11,7 @@ depends=('gcc-libs')
 makedepends=('cargo' 'cmake' 'clang')
 install=salusd.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/rustyhorde/salus/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('c07f10acf56e6a7afb173c287ce04a1f43ab9ba6fbcc38abfc2ee2f4b78ca158')
 
 prepare() {
     cd "salus-$pkgver"
