@@ -344,7 +344,7 @@ to add the repository:
 
 ```bash
 # Download to /tmp (substitute the desired version and arch)
-VERSION=0.1.0
+VERSION=0.1.1
 wget -P /tmp \
     https://github.com/rustyhorde/salus/releases/download/v${VERSION}/salus_${VERSION}_amd64.deb
 
@@ -391,7 +391,7 @@ sudo dnf install salus
 installation:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.1.1
 sudo dnf install \
     ./salus-${VERSION}-1.x86_64.rpm        # or salus-${VERSION}-1.aarch64.rpm
 ```
