@@ -6,6 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
+use anyhow::{Result, bail};
 use bon::Builder;
 use getset::{CopyGetters, Getters};
 use redb::{TypeName, Value};
@@ -18,6 +19,27 @@ pub(crate) struct SalusVal {
     #[builder(into)]
     #[getset(get = "pub(crate)")]
     ciphertext: Vec<u8>,
+}
+
+impl SalusVal {
+    /// Fallible counterpart to the infallible redb [`Value::from_bytes`] hook.
+    ///
+    /// redb only ever calls `from_bytes` on bytes it previously produced via
+    /// `as_bytes`, but a corrupted database (or a fuzzer) can supply fewer than
+    /// the 12 nonce bytes. Keeping the real parse here lets it return an `Err`
+    /// instead of panicking on the slice, so it can be exercised directly.
+    pub(crate) fn try_from_bytes(data: &[u8]) -> Result<SalusVal> {
+        let Some((nonce_bytes, ciphertext)) = data.split_at_checked(12) else {
+            bail!("SalusVal is malformed (need at least 12 nonce bytes)");
+        };
+        let nonce = nonce_bytes
+            .try_into()
+            .expect("split_at_checked(12) yields exactly 12 bytes");
+        Ok(SalusVal {
+            nonce,
+            ciphertext: ciphertext.to_vec(),
+        })
+    }
 }
 
 impl Value for SalusVal {
@@ -39,9 +61,7 @@ impl Value for SalusVal {
     where
         Self: 'a,
     {
-        let nonce = data[0..12].try_into().expect("slice with incorrect length");
-        let ciphertext = data[12..].to_vec();
-        SalusVal { nonce, ciphertext }
+        Self::try_from_bytes(data).expect("SalusVal decode")
     }
 
     fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>

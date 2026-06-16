@@ -148,6 +148,22 @@ pub fn unseal(blob: &[u8], passphrase: &str) -> Result<Option<String>> {
     }
 }
 
+/// Decode arbitrary bytes as the keyring [`Registry`], discarding the result.
+///
+/// Fuzzing facade over the same `decode::<Registry>` path [`read_registry`]
+/// runs on bytes loaded from the OS keyring. A fuzz target should assert that
+/// arbitrary (corrupted) bytes yield an `Err`, never a panic.
+///
+/// # Errors
+///
+/// Returns an error if `bytes` are not a well-formed encoded `Registry`.
+#[cfg(feature = "fuzzing")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn decode_registry(bytes: &[u8]) -> Result<()> {
+    let _registry = decode::<Registry>(bytes)?;
+    Ok(())
+}
+
 /// The count of shared automatic shares, if any have been established.
 ///
 /// `Some(n)` means a non-independent set has already fixed the shared

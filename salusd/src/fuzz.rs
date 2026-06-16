@@ -21,7 +21,10 @@ use anyhow::{Result, bail};
 use libsalus::Response;
 use redb::{Database, backends::InMemoryBackend};
 
-use crate::store::ShareStore;
+use crate::{
+    db::values::{config::ConfigVal, salus::SalusVal},
+    store::ShareStore,
+};
 
 /// Keys seeded into the cached store so `find` has something to match against.
 const SEED_KEYS: &[&str] = &[
@@ -105,4 +108,34 @@ pub fn find_regex(pattern: &str) -> Result<Vec<String>> {
         Response::Matches(matches) => Ok(matches),
         other => bail!("expected matches from find, got {other:?}"),
     })
+}
+
+/// Parse arbitrary bytes as a stored `salus_config` value.
+///
+/// Drives `ConfigVal::try_from_bytes`, the fallible parse behind the infallible
+/// redb `Value::from_bytes` hook. A fuzz target should assert that arbitrary
+/// (corrupted) bytes yield an `Err`, never a panic.
+///
+/// # Errors
+///
+/// Returns an error if `data` is not a well-formed encoded `ConfigVal`.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn decode_config_val(data: &[u8]) -> Result<()> {
+    let _val = ConfigVal::try_from_bytes(data)?;
+    Ok(())
+}
+
+/// Parse arbitrary bytes as a stored `salus_store` value (`nonce || ciphertext`).
+///
+/// Drives `SalusVal::try_from_bytes`, the fallible parse behind the infallible
+/// redb `Value::from_bytes` hook. A fuzz target should assert that short or
+/// corrupted bytes yield an `Err`, never a panic on the nonce slice.
+///
+/// # Errors
+///
+/// Returns an error if `data` is shorter than the 12-byte nonce.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn decode_salus_val(data: &[u8]) -> Result<()> {
+    let _val = SalusVal::try_from_bytes(data)?;
+    Ok(())
 }

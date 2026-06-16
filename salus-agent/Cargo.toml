@@ -22,6 +22,9 @@ name = "salus-agent"
 path = "src/main.rs"
 
 [features]
+# Exposes a small `pub` surface (`keystore::decode_registry`) for the workspace
+# fuzz crate to drive the keyring registry deserialization. Not for normal use.
+fuzzing = []
 unstable = []
 
 [dependencies]

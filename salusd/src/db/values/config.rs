@@ -10,6 +10,7 @@ use anyhow::Result;
 use bincode_next::{Decode, Encode, config::standard, decode_from_slice, encode_to_vec};
 use bon::Builder;
 use getset::Getters;
+use libsalus::MAX_MESSAGE_SIZE;
 use redb::{TypeName, Value};
 
 #[derive(Builder, Clone, Debug, Decode, Encode, Getters)]
@@ -19,13 +20,26 @@ pub(crate) struct ConfigVal {
 
 impl ConfigVal {
     pub(crate) fn to_value<T: Decode<()>>(&self) -> Result<T> {
-        let (res, _): (T, usize) = decode_from_slice(&self.value, standard())?;
+        let (res, _): (T, usize) =
+            decode_from_slice(&self.value, standard().with_limit::<MAX_MESSAGE_SIZE>())?;
         Ok(res)
     }
 
     pub(crate) fn from_value<T: Encode>(value: T) -> Result<Self> {
         let value = encode_to_vec(&value, standard())?;
         Ok(Self::builder().value(value).build())
+    }
+
+    /// Fallible counterpart to the infallible redb [`Value::from_bytes`] hook.
+    ///
+    /// redb only ever calls `from_bytes` on bytes it previously produced via
+    /// `as_bytes`, but a corrupted database (or a fuzzer) can supply arbitrary
+    /// bytes. Keeping the real parse here lets it return an `Err` instead of
+    /// panicking, so it can be exercised directly.
+    pub(crate) fn try_from_bytes(data: &[u8]) -> Result<ConfigVal> {
+        let (res, _): (ConfigVal, usize) =
+            decode_from_slice(data, standard().with_limit::<MAX_MESSAGE_SIZE>())?;
+        Ok(res)
     }
 }
 
@@ -48,8 +62,7 @@ impl Value for ConfigVal {
     where
         Self: 'a,
     {
-        let res: (ConfigVal, usize) = decode_from_slice(data, standard()).unwrap();
-        res.0
+        Self::try_from_bytes(data).expect("ConfigVal decode")
     }
 
     fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
