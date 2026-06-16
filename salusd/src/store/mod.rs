@@ -65,6 +65,13 @@ impl ShareStore {
         self.key_generation
     }
 
+    /// Force-clear the unlocked key immediately and bump the unlock generation
+    /// so any pending auto-clear timer becomes a no-op.
+    pub(crate) fn lock(&mut self) {
+        self.clear_key();
+        self.key_generation = self.key_generation.wrapping_add(1);
+    }
+
     pub(crate) fn add_share<S: Into<String>>(&mut self, share: S) {
         self.shares.push(share.into());
     }

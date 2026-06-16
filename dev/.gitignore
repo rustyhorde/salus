@@ -1,0 +1,6 @@
+# Track only the base config in this dev directory; everything the daemon/client
+# generate at runtime (database, logs, file socket, redb lock) stays untracked.
+*
+!.gitignore
+!salusd.toml
+!salusc.toml

@@ -37,6 +37,14 @@ pub(crate) struct Cli {
     /// or the platform default is used)
     #[clap(short, long, help = "Specify the path to the IPC socket")]
     socket_path: Option<String>,
+    /// Override the salus-agent IPC socket path (otherwise the shared
+    /// `SALUS_AGENT_SOCKET` env var or the platform default is used)
+    #[clap(
+        short = 'a',
+        long,
+        help = "Specify the path to the salus-agent IPC socket"
+    )]
+    agent_socket_path: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -80,6 +88,12 @@ impl Source for Cli {
                 Value::new(Some(&origin), ValueKind::String(socket_path.clone())),
             );
         }
+        if let Some(agent_socket_path) = &self.agent_socket_path {
+            let _old = map.insert(
+                "agent_socket_path".to_string(),
+                Value::new(Some(&origin), ValueKind::String(agent_socket_path.clone())),
+            );
+        }
         Ok(map)
     }
 }
@@ -94,14 +108,28 @@ pub(crate) enum Commands {
         #[arg(short, long, default_value = "3")]
         threshold: u8,
     },
-    Unlock,
+    Unlock {
+        /// The named enrollment set to unlock with (when the agent is enrolled).
+        /// Omit to use the only set, or to be prompted when several exist.
+        #[arg(short, long)]
+        set: Option<String>,
+        /// How long the daemon should hold the key: a number of seconds (capped
+        /// at 24h), or "forever". Omit to use the daemon's configured default.
+        #[arg(short = 'f', long = "for", value_name = "SECONDS|forever")]
+        duration: Option<String>,
+    },
+    /// Clear the daemon's unlocked key and cancel any pending auto-clear timer
+    Lock,
     Store {
         /// The key to store the value under
         #[arg(short, long)]
         key: String,
-        /// The value to store
+        /// The value to store; if omitted, reads from stdin
         #[arg(short, long)]
-        value: String,
+        value: Option<String>,
+        /// Maximum bytes to read from stdin (default: 65536)
+        #[arg(long)]
+        max_value_bytes: Option<usize>,
     },
     Read {
         /// The key to read the value from
@@ -113,6 +141,30 @@ pub(crate) enum Commands {
         #[arg(index = 1)]
         regex: String,
     },
+    /// Enroll a named set of shares so the agent can supply them at unlock
+    Enroll {
+        /// The name of the enrollment set
+        #[arg(short, long, default_value = "default")]
+        name: String,
+        /// Replace an existing set with the same name
+        #[arg(long)]
+        force: bool,
+        /// Store this set's automatic shares separately instead of reusing the
+        /// shared ones (accepts the documented keyring-union risk)
+        #[arg(long)]
+        independent_auto: bool,
+    },
+    /// Remove a named enrolled set, or every set with --all
+    Forget {
+        /// The name of the set to remove
+        #[arg(short, long, conflicts_with = "all")]
+        name: Option<String>,
+        /// Remove every enrolled set
+        #[arg(long)]
+        all: bool,
+    },
+    /// List the enrolled sets and whether the agent is reachable
+    EnrollStatus,
 }
 
 #[cfg(test)]
@@ -138,5 +190,13 @@ mod test {
         let map = cli.collect().unwrap();
         assert!(map.contains_key("socket_path"));
         assert!(!map.contains_key("verbose"));
+    }
+
+    #[test]
+    fn collect_includes_agent_socket_path() {
+        let cli = Cli::try_parse_from(["salusc", "-a", "/tmp/a.sock", "unlock"]).unwrap();
+        let map = cli.collect().unwrap();
+        assert!(map.contains_key("agent_socket_path"));
+        assert!(!map.contains_key("socket_path"));
     }
 }

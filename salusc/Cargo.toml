@@ -14,7 +14,9 @@ rust-version = "1.91.1"
 version = "0.1.0"
 
 [features]
-unstable = []
+# Propagate to salus-agent so that coverage/unstable-gated lints stay consistent
+# when salusc is built with `--features unstable` (e.g. under cargo-llvm-cov).
+unstable = ["salus-agent/unstable"]
 
 [[package.metadata.cargo-matrix.channel]]
 name = "default"
@@ -33,7 +35,8 @@ config = { workspace = true }
 crossterm = "0.29.0"
 dirs2 = { workspace = true }
 interprocess = { workspace = true }
-libsalus = { path = "../libsalus" }
+libsalus = { version = "0.1.0", path = "../libsalus" }
+salus-agent = { version = "0.1.0", path = "../salus-agent" }
 scanpw = "1.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { workspace = true, features = ["io-std"] }

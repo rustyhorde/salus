@@ -14,10 +14,10 @@ A key/value store protected by secret shares and encryption
 [![Crates.io](https://img.shields.io/crates/l/salusd.svg)](https://crates.io/crates/salusd)
 [![Crates.io](https://img.shields.io/crates/d/salusd.svg)](https://crates.io/crates/salusd)
 
-### salus
-[![Crates.io](https://img.shields.io/crates/v/salus.svg)](https://crates.io/crates/salus)
-[![Crates.io](https://img.shields.io/crates/l/salus.svg)](https://crates.io/crates/salus)
-[![Crates.io](https://img.shields.io/crates/d/salus.svg)](https://crates.io/crates/salus)
+### salusc
+[![Crates.io](https://img.shields.io/crates/v/salusc.svg)](https://crates.io/crates/salusc)
+[![Crates.io](https://img.shields.io/crates/l/salusc.svg)](https://crates.io/crates/salusc)
+[![Crates.io](https://img.shields.io/crates/d/salusc.svg)](https://crates.io/crates/salusc)
 
 ### CI/CD
 [![docs.rs](https://docs.rs/libsalus/badge.svg)](https://docs.rs/libsalus)
@@ -87,6 +87,60 @@ cargo clippy --all-targets   # lints (see note below)
 The daemon must be unlocked before `store`/`read` succeed (otherwise
 `StoreNotUnlocked`). The reconstructed key auto-clears after `key_timeout`
 seconds (default 20), after which you must `unlock` again.
+
+### Local testing (debug builds)
+
+To exercise debug builds from the project directory **without disturbing a
+production install** on the same machine, keep all state under the tracked
+`dev/` directory and redirect every path with CLI flags.
+
+Two things must be isolated:
+
+- **The socket.** On Linux the default IPC socket is an *abstract-namespace*
+  name (`salus.sock`) that every install shares — a debug daemon would try to
+  bind the same name as a running production daemon. Pointing the socket at a
+  **file path** (any explicit `--socket-path` / `SALUS_SOCKET` value) switches to
+  a filesystem socket, so the dev pair gets its own socket while production keeps
+  using the abstract name. Use a path inside `dev/`.
+- **The database (and config/log).** The database, config-file, and tracing
+  paths are **CLI-only** (`-d` / `-c` / `-t`); they are *not* read from env or
+  the TOML file. Without `-d`, a debug daemon reads and writes the **production**
+  database under `~/.local/share/salusd/`. Always pass `-d` (and `-c`/`-t`) so it
+  stays in `dev/`.
+
+The repo ships base config (`dev/salusd.toml`, `dev/salusc.toml`) and a fish
+helper that wires these flags up. Source it once per shell:
+
+```bash
+source scripts/dev_env.fish      # defines salusd-dev / salusc-dev
+
+salusd-dev                       # terminal 1: foreground debug daemon
+salusc-dev shares                # terminal 2: first-time init — record the shares
+salusc-dev unlock                # enter `threshold` shares (default 3)
+salusc-dev store -k mykey -v myvalue
+salusc-dev read  -k mykey
+salusc-dev find '^my'
+```
+
+The wrappers are thin — the equivalent raw commands (for non-fish shells, run
+from the repo root) are:
+
+```bash
+# daemon
+cargo run -p salusd -- -e \
+    -c dev/salusd.toml -d dev/salusd.redb -t dev/salusd.log -s dev/salus.sock
+
+# client (repeat per command)
+cargo run -p salusc -- -c dev/salusc.toml -s dev/salus.sock shares
+```
+
+Only `dev/salusd.toml`, `dev/salusc.toml`, and `dev/.gitignore` are tracked; the
+runtime artifacts (`dev/salusd.redb`, `dev/salusd.log`, `dev/salus.sock`) are
+gitignored. The dev config sets a longer `key_timeout` (300s) so the in-memory
+key does not clear out from under you during manual testing.
+
+> **Stale socket.** If the daemon ever fails to start with an "address in use"
+> error after a crash, remove the leftover file socket: `rm -f dev/salus.sock`.
 
 ## Usage
 
@@ -212,6 +266,218 @@ generic `read_value` / `write_value` helpers.
   (`.github/workflows/audit.yml`).
 - **The client holds no key material and performs no crypto** — all crypto and
   storage live in the daemon.
+
+## Installation
+
+Each release publishes the `salusd` daemon and the `salusc` client through
+several channels. Every packaged install also ships shell completions, man
+pages, an example config, and a systemd **user** unit for the daemon. Pick the
+section for your platform.
+
+### Installation (Arch Linux / AUR)
+
+Two AUR packages are available; install either with an AUR helper (e.g. `yay`,
+`paru`) or manually with `makepkg`. They install the same binary names and
+conflict with each other — only one can be installed at a time.
+
+| Package | Build | Architectures |
+|---------|-------|---------------|
+| `salus` | Compiles locally from the release source tarball (`cargo build`) | `x86_64` |
+| `salus-bin` | Pre-compiled static MUSL binaries from the GitHub release | `x86_64`, `aarch64` |
+
+```bash
+# Pre-compiled binaries (no Rust toolchain required)
+yay -S salus-bin
+
+# Or build from source (requires rust, cmake, clang)
+yay -S salus
+```
+
+Install manually with `makepkg`:
+
+```bash
+# Pre-compiled binary package
+git clone https://aur.archlinux.org/salus-bin.git
+cd salus-bin && makepkg -si && cd ..
+
+# Or the source package
+git clone https://aur.archlinux.org/salus.git
+cd salus && makepkg -si && cd ..
+```
+
+Removing:
+
+```bash
+sudo pacman -R salus        # or salus-bin
+sudo pacman -Rs salus       # also remove now-orphaned dependencies
+```
+
+### Installation (Debian / Ubuntu)
+
+#### Install from the apt repository (recommended)
+
+The signed apt repository at <https://rustyhorde.github.io/salus-packages/>
+tracks every release, so `apt upgrade` keeps salus current. Packages are built
+for `amd64` and `arm64`:
+
+```bash
+# Add the repository signing key
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://rustyhorde.github.io/salus-packages/gpg.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/salus.gpg
+
+# Add the apt source
+echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/salus.gpg] \
+  https://rustyhorde.github.io/salus-packages/apt stable main" \
+    | sudo tee /etc/apt/sources.list.d/salus.list
+
+# Install
+sudo apt update
+sudo apt install salus
+```
+
+#### Install a downloaded `.deb` directly
+
+Pre-built `.deb` packages are attached to each
+[GitHub release](https://github.com/rustyhorde/salus/releases) if you prefer not
+to add the repository:
+
+```bash
+# Download to /tmp (substitute the desired version and arch)
+VERSION=0.1.0
+wget -P /tmp \
+    https://github.com/rustyhorde/salus/releases/download/v${VERSION}/salus_${VERSION}_amd64.deb
+
+sudo apt install /tmp/salus_${VERSION}_amd64.deb
+```
+
+> **Note**: Place `.deb` files in `/tmp/` before installing with `apt`. When
+> reading a local file `apt` drops privileges to the `_apt` user, which cannot
+> read files under `/home/`. Using `/tmp/` (world-readable) avoids the resulting
+> permission warning. Alternatively, `sudo dpkg -i salus_${VERSION}_amd64.deb`
+> runs as root and works from any location (run `sudo apt-get install -f`
+> afterwards to resolve dependencies).
+
+Re-running either command with a newer `.deb` upgrades an existing install.
+
+Removing:
+
+```bash
+sudo apt remove salus
+sudo apt purge salus        # also remove system config files
+```
+
+### Installation (Fedora / RHEL)
+
+Pre-built `.rpm` packages for `x86_64` and `aarch64` are served from the signed
+dnf repository at <https://rustyhorde.github.io/salus-packages/>, so
+`dnf upgrade` keeps salus current:
+
+```bash
+# Add the repository (imports the signing key on first install)
+sudo dnf config-manager \
+    --add-repo https://rustyhorde.github.io/salus-packages/rpm/salus.repo
+
+# Install
+sudo dnf install salus
+```
+
+> On older releases the subcommand is
+> `sudo dnf config-manager addrepo --from-repofile=…`, and on dnf 4 you may need
+> `sudo dnf install dnf-plugins-core` first.
+
+`.rpm` files are also attached to each
+[GitHub release](https://github.com/rustyhorde/salus/releases) for direct
+installation:
+
+```bash
+VERSION=0.1.0
+sudo dnf install \
+    ./salus-${VERSION}-1.x86_64.rpm        # or salus-${VERSION}-1.aarch64.rpm
+```
+
+Removing:
+
+```bash
+sudo dnf remove salus
+```
+
+### Installation (cargo)
+
+Requires a Rust toolchain. Install the two binaries directly from
+[crates.io](https://crates.io):
+
+```bash
+cargo install salusd        # the daemon
+cargo install salusc        # the client
+```
+
+Append `--version <x.y.z>` to install a specific release. A `cargo install` does
+**not** drop a systemd unit; see the note below to run one as a service.
+
+### Homebrew (macOS)
+
+```bash
+brew tap rustyhorde/salus
+brew install salus
+```
+
+### Running salusd as a systemd user service
+
+salusd is a **per-user** daemon — its database, config, and IPC socket are all
+per-user — so it runs as a systemd *user* service, not a system service. The
+`salus`/`salus-bin`, `.deb`, and `.rpm` packages install `salusd.service` to
+`/usr/lib/systemd/user/` with `ExecStart=/usr/bin/salusd`. Enable it per-user
+(no `sudo`):
+
+```bash
+systemctl --user enable --now salusd
+```
+
+The daemon holds the reconstructed key only in memory and clears it after
+`key_timeout`, so after every (re)start you must unlock it again:
+
+```bash
+salusc shares   # first-time init only — records the shares ONCE
+salusc unlock   # reconstruct the key in the daemon's memory
+```
+
+> **Upgrades.** Because salusd is a *user* service, the package manager (which
+> runs as root) cannot restart it for you, and an automatic restart would clear
+> your in-memory key anyway. After upgrading the package, pick up the new binary
+> manually:
+>
+> ```bash
+> systemctl --user daemon-reload
+> systemctl --user restart salusd
+> salusc unlock                       # the key cleared on restart
+> ```
+
+> **Installed via `cargo install`?** The binary lives at `~/.cargo/bin/salusd`,
+> not `/usr/bin/salusd`. Copy the unit from a packaged install (or write your
+> own) and set `ExecStart=%h/.cargo/bin/salusd` before enabling it.
+
+## Releasing
+
+Releases are driven by a git tag push and handled by
+`.github/workflows/release.yml`:
+
+1. Bump the version in `libsalus/`, `salusd/`, and `salusc/` `Cargo.toml`
+   (and the `libsalus` dependency version in `salusd`/`salusc`), then commit.
+2. Tag and push: `git tag vX.Y.Z && git push --tags`. A `vX.Y.Z-rc*` tag only
+   exercises the build jobs (publishing is skipped) for a dry run.
+3. On a full `vX.Y.Z` tag the workflow builds static MUSL + macOS binaries,
+   creates the GitHub release, publishes the crates to crates.io (in dependency
+   order: `libsalus` → `salusd` → `salusc`), updates the AUR PKGBUILDs,
+   publishes the signed apt/rpm repository, and updates the Homebrew tap.
+
+`cargo xtask dist salusd|salusc` regenerates the shell completions, man pages,
+licenses, and (for `salusd`) the systemd unit and example config under `dist/`.
+
+The workflow requires these repository secrets: `CRATES_IO_TOKEN` (crates.io),
+`AUR_SSH_PRIVATE_KEY` (AUR), `HOMEBREW_TAP_TOKEN` (Homebrew tap),
+`PACKAGES_REPO_TOKEN` + `PACKAGES_GPG_PRIVATE_KEY` + `PACKAGES_GPG_KEY_ID`
+(signed apt/rpm repo).
 
 ## License
 

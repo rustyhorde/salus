@@ -1,0 +1,35 @@
+# Example salusd configuration.
+#
+# Copy to the per-user config location and edit as needed:
+#   Linux:  ~/.config/salusd/salusd.toml
+#   macOS:  ~/Library/Application Support/salusd/salusd.toml
+#
+# Every field is optional — anything omitted falls back to the built-in default.
+# Settings here are overridden by SALUSD_* environment variables, which are in
+# turn overridden by explicitly-set command-line flags.
+
+# Seconds the reconstructed key is held in memory before it auto-clears and an
+# `salusc unlock` is required again (default: 20).
+key_timeout = 20
+
+# Logging verbosity knobs (counts). Leave at 0 for default verbosity.
+verbose = 0
+quiet = 0
+
+# Enable logging to stdout/stderr in addition to the tracing file.
+# Leave false for service use — journald only captures stdout if the daemon
+# writes there, and stdout logging is intended for foreground/dev runs.
+enable_std_output = false
+
+# Override the IPC socket path. When unset, the shared SALUS_SOCKET environment
+# variable is used, falling back to the platform default.
+# socket_path = "/run/user/1000/salus.sock"
+
+[tracing]
+with_target = false
+with_level = false
+with_thread_ids = false
+with_thread_names = false
+with_line_number = false
+# Additional tracing directives (env-filter syntax), e.g. "salusd=debug".
+# directives = "info"

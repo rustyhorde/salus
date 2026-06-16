@@ -21,9 +21,11 @@ cargo test gen_key_works         # run a single test by name
 cargo clippy --all-targets       # lints — see lint note below
 cargo run -p salusd              # run the daemon (foreground)
 cargo run -p salusc -- shares    # run the client; args after `--`
+cargo run -p xtask -- dist salusd   # completions/man page/systemd unit -> dist/salusd
+cargo run -p xtask -- dist salusc   # completions/man page -> dist/salusc
 ```
 
-**Final verification.** Always run `scripts/run_all.fish --no-fuzz` as the final verification step before considering a change complete.
+**Final verification.** Always run `scripts/run_all.fish --no-fuzz --no-musl --no-install` as the final verification step before considering a change complete. (`run_all.fish` defaults to also running `run_install.fish` and a Docker-based MUSL build via `run_musl.fish`; `--no-musl --no-install` keeps the standard code check fast and Docker-free. Drop those flags — or run `scripts/run_musl.fish` directly — to build the static MUSL binaries locally.)
 
 ### Running the system end-to-end
 

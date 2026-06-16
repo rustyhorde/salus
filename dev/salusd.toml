@@ -1,0 +1,8 @@
+# Dev-only salusd config (debug builds). The db/log/socket paths are passed as
+# CLI flags by scripts/dev_env.fish, not set here.
+key_timeout = 300   # 5 min, vs the 20s default, for relaxed manual testing
+verbose = 1
+
+[tracing]
+with_target = true
+with_level = true

@@ -1,0 +1,3 @@
+# Dev-only salusc config (debug builds). The socket path is passed via -s by
+# scripts/dev_env.fish, so this mostly carries verbosity.
+verbose = 1

@@ -1,0 +1,19 @@
+[Unit]
+Description=Salus secret-store daemon
+Documentation=man:salusd(1)
+After=default.target
+
+[Service]
+Type=simple
+# salusd opens its own IPC socket and runs in the foreground; systemd manages it.
+# This unit is shipped by the AUR/DEB/RPM packages, which install the binary at
+# /usr/bin/salusd. If you installed via `cargo install salusd` instead (binary at
+# ~/.cargo/bin/salusd), copy this unit and change ExecStart to %h/.cargo/bin/salusd.
+ExecStart=/usr/bin/salusd
+Restart=on-failure
+RestartSec=5s
+# salusd logs to its tracing file by default. Do NOT pass -e (stdout logging is
+# dev-only and not intended for service use).
+
+[Install]
+WantedBy=default.target
