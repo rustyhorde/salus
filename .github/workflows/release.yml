@@ -655,10 +655,19 @@ jobs:
           mkdir -p /tmp/tap/Formula
           cp salus.rb /tmp/tap/Formula/salus.rb
           cd /tmp/tap
+          # Handle all tap repo states: normal (origin/master tracked), detached HEAD
+          # (prior failed push), or empty repo (brand-new tap, first-ever push)
+          if git show-ref --quiet refs/remotes/origin/master; then
+            git checkout master
+          elif git rev-parse HEAD 2>/dev/null; then
+            git checkout -B master
+          else
+            git checkout --orphan master
+          fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/
-          git diff-index --quiet HEAD || git commit -m "Update to v${PKGVER}"
+          git diff-index --quiet HEAD 2>/dev/null || git commit -m "Update to v${PKGVER}"
 
           for attempt in 1 2 3; do
             if git push origin master; then
