@@ -9,15 +9,16 @@
 //! `cargo xtask dist <binary>`
 //!
 //! Generates shell completions (bash, zsh, fish) and a man page for the given
-//! salus binary, copies the dual licenses, and — for `salusd` — copies the
-//! systemd user unit and the example config. Each binary's output is written to
-//! `dist/<binary>/`.
+//! salus binary, copies the dual licenses, and — for `salusd`/`salus-agent` —
+//! copies the systemd user unit and the example config. Each binary's output is
+//! written to `dist/<binary>/`.
 //!
 //! # Usage
 //!
 //! ```text
 //! cargo xtask dist salusd
 //! cargo xtask dist salusc
+//! cargo xtask dist salus-agent
 //! ```
 
 use std::{
@@ -39,7 +40,7 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::new("binary")
                         .required(true)
-                        .help("Binary to generate artifacts for (salusd, salusc)"),
+                        .help("Binary to generate artifacts for (salusd, salusc, salus-agent)"),
                 ),
         )
         .get_matches();
@@ -57,7 +58,8 @@ fn dist(binary: &str) -> Result<()> {
     let mut cmd = match binary {
         "salusd" => salusd_command(),
         "salusc" => salusc_command(),
-        other => bail!("unknown binary '{other}'; expected one of: salusd, salusc"),
+        "salus-agent" => salus_agent_command(),
+        other => bail!("unknown binary '{other}'; expected one of: salusd, salusc, salus-agent"),
     };
 
     let out_dir = PathBuf::from("dist").join(binary);
@@ -83,22 +85,26 @@ fn copy_licenses(out_dir: &Path) -> Result<()> {
 }
 
 fn copy_systemd_units(binary: &str, out_dir: &Path) -> Result<()> {
-    if binary != "salusd" {
-        return Ok(());
-    }
-    let src = PathBuf::from("packaging/systemd/salusd.service");
-    fs::copy(&src, out_dir.join("salusd.service"))
+    let unit = match binary {
+        "salusd" => "salusd.service",
+        "salus-agent" => "salus-agent.service",
+        _ => return Ok(()),
+    };
+    let src = PathBuf::from("packaging/systemd").join(unit);
+    fs::copy(&src, out_dir.join(unit))
         .with_context(|| format!("failed to copy {}", src.display()))?;
     Ok(())
 }
 
 fn copy_example_config(binary: &str, out_dir: &Path) -> Result<()> {
-    if binary != "salusd" {
-        return Ok(());
-    }
-    let src = PathBuf::from("packaging/arch/salus/examples/salusd.toml.example");
+    let example = match binary {
+        "salusd" => "salusd.toml.example",
+        "salus-agent" => "salus-agent.toml.example",
+        _ => return Ok(()),
+    };
+    let src = PathBuf::from("packaging/arch/salus/examples").join(example);
     if src.exists() {
-        fs::copy(&src, out_dir.join("salusd.toml.example"))
+        fs::copy(&src, out_dir.join(example))
             .with_context(|| format!("failed to copy {}", src.display()))?;
     }
     Ok(())
@@ -193,6 +199,13 @@ fn salusc_command() -> Command {
                 .help("Specify a path to the config file"),
         )
         .arg(socket_path_arg())
+        .arg(
+            Arg::new("agent-socket-path")
+                .short('a')
+                .long("agent-socket-path")
+                .value_name("PATH")
+                .help("Specify the path to the salus-agent IPC socket"),
+        )
         .subcommand(
             Command::new("shares")
                 .about("Generate and print the secret shares (first-time init)")
@@ -214,7 +227,26 @@ fn salusc_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("unlock").about("Reconstruct the key in the daemon from secret shares"),
+            Command::new("unlock")
+                .about("Reconstruct the key in the daemon from secret shares")
+                .arg(
+                    Arg::new("set")
+                        .short('s')
+                        .long("set")
+                        .value_name("NAME")
+                        .help("The named enrollment set to unlock with"),
+                )
+                .arg(
+                    Arg::new("duration")
+                        .short('f')
+                        .long("for")
+                        .value_name("SECONDS|forever")
+                        .help("How long the daemon should hold the key (max 24h)"),
+                ),
+        )
+        .subcommand(
+            Command::new("lock")
+                .about("Clear the daemon's unlocked key and any pending auto-clear timer"),
         )
         .subcommand(
             Command::new("store")
@@ -254,6 +286,83 @@ fn salusc_command() -> Command {
                         .required(true)
                         .help("The regex to find keys with"),
                 ),
+        )
+        .subcommand(
+            Command::new("enroll")
+                .about("Enroll a named set of shares for agent-assisted unlocking")
+                .arg(
+                    Arg::new("name")
+                        .short('n')
+                        .long("name")
+                        .value_name("NAME")
+                        .default_value("default")
+                        .help("The name of the enrollment set"),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help("Replace an existing set with the same name"),
+                )
+                .arg(
+                    Arg::new("independent-auto")
+                        .long("independent-auto")
+                        .action(ArgAction::SetTrue)
+                        .help("Store this set's automatic shares separately"),
+                ),
+        )
+        .subcommand(
+            Command::new("forget")
+                .about("Remove a named enrolled set, or every set with --all")
+                .arg(
+                    Arg::new("name")
+                        .short('n')
+                        .long("name")
+                        .value_name("NAME")
+                        .conflicts_with("all")
+                        .help("The name of the set to remove"),
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .action(ArgAction::SetTrue)
+                        .help("Remove every enrolled set"),
+                ),
+        )
+        .subcommand(
+            Command::new("enroll-status")
+                .about("List the enrolled sets and whether the agent is reachable"),
+        )
+}
+
+/// `salus-agent` — the login agent that holds enrolled shares
+fn salus_agent_command() -> Command {
+    Command::new("salus-agent")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("The login agent for the secret store")
+        .arg(verbose_arg())
+        .arg(quiet_arg())
+        .arg(
+            Arg::new("enable-std-output")
+                .short('e')
+                .long("enable-std-output")
+                .action(ArgAction::SetTrue)
+                .help("Enable logging to stdout/stderr"),
+        )
+        .arg(config_absolute_path_arg())
+        .arg(
+            Arg::new("tracing-absolute-path")
+                .short('t')
+                .long("tracing-absolute-path")
+                .value_name("PATH")
+                .help("Specify the absolute path to the tracing output file"),
+        )
+        .arg(
+            Arg::new("socket-path")
+                .short('s')
+                .long("socket-path")
+                .value_name("PATH")
+                .help("Specify the path to the agent IPC socket"),
         )
 }
 

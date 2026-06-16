@@ -11,6 +11,8 @@ use bincode_next::{Decode, Encode, config::standard, decode_from_slice, encode_t
 use bon::Builder;
 use getset::CopyGetters;
 
+pub(crate) mod agent;
+
 /// Maximum size, in bytes, of a single encoded protocol message (1 MiB).
 ///
 /// Both the daemon and the client refuse to decode or allocate beyond this
@@ -117,11 +119,31 @@ impl Store {
     }
 }
 
+/// How long the daemon should keep the reconstructed key in memory after a
+/// successful unlock.
+#[derive(Clone, Copy, Debug, Decode, Default, Encode, Eq, PartialEq)]
+pub enum UnlockTimeout {
+    /// Use the daemon's configured `key_timeout` default.
+    #[default]
+    Default,
+    /// Keep the key for this many seconds. The daemon clamps the value to at
+    /// most 24 hours (`86_400` seconds).
+    Seconds(u64),
+    /// Keep the key until an explicit lock or the daemon restarts; no
+    /// auto-clear timer is armed.
+    Forever,
+}
+
+/// The maximum number of seconds the daemon will hold an unlocked key (24 h).
+pub const MAX_UNLOCK_SECONDS: u64 = 24 * 60 * 60;
+
 /// A message to send to the daemon
 #[derive(Clone, Debug, Decode, Encode)]
 pub enum Action {
-    /// Attempt to unlock the store
-    Unlock,
+    /// Attempt to unlock the store, holding the key for the given duration
+    Unlock(UnlockTimeout),
+    /// Clear the unlocked key (and any pending auto-clear timer) immediately
+    Lock,
     /// Send a share to the daemon
     Share(Share),
     /// Generate the salus shares

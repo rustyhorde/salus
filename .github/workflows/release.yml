@@ -68,9 +68,10 @@ jobs:
         run: |
           cross build --release --locked \
             --target x86_64-unknown-linux-musl \
-            --bin salusd --bin salusc
+            --bin salusd --bin salusc --bin salus-agent
           cp target/x86_64-unknown-linux-musl/release/salusd salusd-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/salusc salusc-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/salus-agent salus-agent-x86_64-unknown-linux-musl
 
       - name: Build aarch64 cross Docker image
         run: |
@@ -83,26 +84,30 @@ jobs:
         run: |
           cross build --release --locked \
             --target aarch64-unknown-linux-musl \
-            --bin salusd --bin salusc
+            --bin salusd --bin salusc --bin salus-agent
           cp target/aarch64-unknown-linux-musl/release/salusd salusd-aarch64-unknown-linux-musl
           cp target/aarch64-unknown-linux-musl/release/salusc salusc-aarch64-unknown-linux-musl
+          cp target/aarch64-unknown-linux-musl/release/salus-agent salus-agent-aarch64-unknown-linux-musl
 
       - name: Generate xtask dist artifacts
         run: |
           cargo run --locked -p xtask -- dist salusd
           cargo run --locked -p xtask -- dist salusc
+          cargo run --locked -p xtask -- dist salus-agent
 
       - name: Create dist tarball
-        run: tar -czf dist-salus.tar.gz -C dist salusd salusc
+        run: tar -czf dist-salus.tar.gz -C dist salusd salusc salus-agent
 
       - name: Stage release assets
         run: |
           mkdir -p release-assets
-          cp salusd-x86_64-unknown-linux-musl  release-assets/
-          cp salusc-x86_64-unknown-linux-musl  release-assets/
-          cp salusd-aarch64-unknown-linux-musl release-assets/
-          cp salusc-aarch64-unknown-linux-musl release-assets/
-          cp dist-salus.tar.gz                 release-assets/
+          cp salusd-x86_64-unknown-linux-musl      release-assets/
+          cp salusc-x86_64-unknown-linux-musl      release-assets/
+          cp salus-agent-x86_64-unknown-linux-musl release-assets/
+          cp salusd-aarch64-unknown-linux-musl     release-assets/
+          cp salusc-aarch64-unknown-linux-musl     release-assets/
+          cp salus-agent-aarch64-unknown-linux-musl release-assets/
+          cp dist-salus.tar.gz                     release-assets/
 
       - name: Install nfpm
         run: |
@@ -168,18 +173,20 @@ jobs:
         run: |
           cargo build --release --locked \
             --target aarch64-apple-darwin \
-            --bin salusd --bin salusc
+            --bin salusd --bin salusc --bin salus-agent
 
       - name: Generate xtask dist artifacts
         run: |
           cargo run --locked -p xtask -- dist salusd
           cargo run --locked -p xtask -- dist salusc
+          cargo run --locked -p xtask -- dist salus-agent
 
       - name: Bundle macOS tarball
         run: |
           cp target/aarch64-apple-darwin/release/salusd dist/salusd/salusd
           cp target/aarch64-apple-darwin/release/salusc dist/salusc/salusc
-          tar -czf salus-aarch64-apple-darwin.tar.gz -C dist salusd salusc
+          cp target/aarch64-apple-darwin/release/salus-agent dist/salus-agent/salus-agent
+          tar -czf salus-aarch64-apple-darwin.tar.gz -C dist salusd salusc salus-agent
 
       - name: Upload macOS release assets
         # v7
@@ -262,7 +269,8 @@ jobs:
       - name: Publish crates in dependency order
         run: |
           set -euo pipefail
-          # libsalus must land first; salusd and salusc depend on it by version.
+          # libsalus must land first; salus-agent, salusd and salusc depend on it
+          # by version, and salusc additionally depends on salus-agent.
           # `cargo publish` blocks until the crate is queryable, but the index can
           # still lag for dependents, so retry the dependent publishes.
           publish_with_retry() {
@@ -279,6 +287,7 @@ jobs:
           }
 
           publish_with_retry libsalus
+          publish_with_retry salus-agent
           publish_with_retry salusd
           publish_with_retry salusc
 
@@ -314,8 +323,10 @@ jobs:
           echo "dist_salus=$(sha256sum release-assets/dist-salus.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "x86_64_salusd=$(sha256sum release-assets/salusd-x86_64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "x86_64_salusc=$(sha256sum release-assets/salusc-x86_64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "x86_64_salus_agent=$(sha256sum release-assets/salus-agent-x86_64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "aarch64_salusd=$(sha256sum release-assets/salusd-aarch64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "aarch64_salusc=$(sha256sum release-assets/salusc-aarch64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "aarch64_salus_agent=$(sha256sum release-assets/salus-agent-aarch64-unknown-linux-musl | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Update source PKGBUILD
         env:
@@ -330,18 +341,20 @@ jobs:
       - name: Update binary PKGBUILD
         env:
           PKGVER:         ${{ needs.build.outputs.pkgver }}
-          DIST_SALUS:     ${{ steps.binsums.outputs.dist_salus }}
-          X86_64_SALUSD:  ${{ steps.binsums.outputs.x86_64_salusd }}
-          X86_64_SALUSC:  ${{ steps.binsums.outputs.x86_64_salusc }}
-          AARCH64_SALUSD: ${{ steps.binsums.outputs.aarch64_salusd }}
-          AARCH64_SALUSC: ${{ steps.binsums.outputs.aarch64_salusc }}
+          DIST_SALUS:          ${{ steps.binsums.outputs.dist_salus }}
+          X86_64_SALUSD:       ${{ steps.binsums.outputs.x86_64_salusd }}
+          X86_64_SALUSC:       ${{ steps.binsums.outputs.x86_64_salusc }}
+          X86_64_SALUS_AGENT:  ${{ steps.binsums.outputs.x86_64_salus_agent }}
+          AARCH64_SALUSD:      ${{ steps.binsums.outputs.aarch64_salusd }}
+          AARCH64_SALUSC:      ${{ steps.binsums.outputs.aarch64_salusc }}
+          AARCH64_SALUS_AGENT: ${{ steps.binsums.outputs.aarch64_salus_agent }}
         run: |
           PKGBUILD="packaging/arch/salus-bin/PKGBUILD"
           sed -i "s/^pkgver=.*/pkgver=${PKGVER}/" "$PKGBUILD"
           sed -i "s/^pkgrel=.*/pkgrel=1/" "$PKGBUILD"
           sed -i "s|^sha256sums=.*|sha256sums=('${DIST_SALUS}')|" "$PKGBUILD"
-          sed -i "s|^sha256sums_x86_64=.*|sha256sums_x86_64=('${X86_64_SALUSD}' '${X86_64_SALUSC}')|" "$PKGBUILD"
-          sed -i "s|^sha256sums_aarch64=.*|sha256sums_aarch64=('${AARCH64_SALUSD}' '${AARCH64_SALUSC}')|" "$PKGBUILD"
+          sed -i "s|^sha256sums_x86_64=.*|sha256sums_x86_64=('${X86_64_SALUSD}' '${X86_64_SALUSC}' '${X86_64_SALUS_AGENT}')|" "$PKGBUILD"
+          sed -i "s|^sha256sums_aarch64=.*|sha256sums_aarch64=('${AARCH64_SALUSD}' '${AARCH64_SALUSC}' '${AARCH64_SALUS_AGENT}')|" "$PKGBUILD"
 
       - name: Generate .SRCINFO files
         run: |

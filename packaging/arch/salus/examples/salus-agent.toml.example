@@ -1,0 +1,35 @@
+# Example salus-agent configuration.
+#
+# Copy to the per-user config location and edit as needed:
+#   Linux:  ~/.config/salus-agent/salus-agent.toml
+#   macOS:  ~/Library/Application Support/salus-agent/salus-agent.toml
+#
+# Every field is optional — anything omitted falls back to the built-in default.
+# Settings here are overridden by SALUSAGENT_* environment variables, which are
+# in turn overridden by explicitly-set command-line flags.
+
+# Seconds the agent caches an unsealed final share after a successful unseal so
+# the passphrase is typed once per session rather than on every `salusc unlock`
+# (default: 3600). Set to 0 to require the passphrase on every unlock.
+passphrase_cache_timeout = 3600
+
+# Logging verbosity knobs (counts). Leave at 0 for default verbosity.
+verbose = 0
+quiet = 0
+
+# Enable logging to stdout/stderr in addition to the tracing file.
+# Leave false for service use.
+enable_std_output = false
+
+# Override the agent IPC socket path. When unset, the shared SALUS_AGENT_SOCKET
+# environment variable is used, falling back to the platform default.
+# socket_path = "/run/user/1000/salus-agent.sock"
+
+[tracing]
+with_target = false
+with_level = false
+with_thread_ids = false
+with_thread_names = false
+with_line_number = false
+# Additional tracing directives (env-filter syntax), e.g. "salus_agent=debug".
+# directives = "info"

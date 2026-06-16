@@ -35,7 +35,7 @@ for arg in $argv
 end
 
 set release_dir target/x86_64-unknown-linux-musl/release
-set bins salusd salusc
+set bins salusd salusc salus-agent
 
 function run_step
     echo ""
@@ -48,9 +48,9 @@ function run_step
 end
 
 if test $unstable = true
-    run_step docker run -v cargo-cache:/root/.cargo/registry -v (pwd):/home/rust/src -v ~/.gitconfig:/root/.gitconfig:ro --rm -t blackdex/rust-musl:x86_64-musl-stable cargo build --release --features unstable --bin salusd --bin salusc
+    run_step docker run -v cargo-cache:/root/.cargo/registry -v (pwd):/home/rust/src -v ~/.gitconfig:/root/.gitconfig:ro --rm -t blackdex/rust-musl:x86_64-musl-stable cargo build --release --features unstable --bin salusd --bin salusc --bin salus-agent
 else
-    run_step docker run -v cargo-cache:/root/.cargo/registry -v (pwd):/home/rust/src -v ~/.gitconfig:/root/.gitconfig:ro --rm -t blackdex/rust-musl:x86_64-musl-stable cargo build --release --bin salusd --bin salusc
+    run_step docker run -v cargo-cache:/root/.cargo/registry -v (pwd):/home/rust/src -v ~/.gitconfig:/root/.gitconfig:ro --rm -t blackdex/rust-musl:x86_64-musl-stable cargo build --release --bin salusd --bin salusc --bin salus-agent
 end
 
 echo ""

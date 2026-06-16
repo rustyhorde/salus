@@ -6,7 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-//! Salus - A secure secret store in Rust
+//! salus login agent
 
 // rustc lints
 #![cfg_attr(
@@ -230,179 +230,28 @@
     )
 )]
 #![cfg_attr(all(docsrs), feature(doc_cfg))]
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-use std::path::PathBuf;
+use crate::error::{clap_or_error, success};
 
-use anyhow::Result;
-use interprocess::local_socket::GenericFilePath;
-use interprocess::local_socket::Name;
-use interprocess::local_socket::ToFsName;
+mod config;
+mod error;
+mod handler;
+pub mod keystore;
+mod logging;
+mod runtime;
+mod store;
+mod utils;
 
-mod key;
-mod message;
-
-pub use crate::key::gen_shares;
-pub use crate::key::unlock_key;
-pub use crate::message::Action;
-pub use crate::message::Init;
-pub use crate::message::MAX_MESSAGE_SIZE;
-pub use crate::message::MAX_UNLOCK_SECONDS;
-pub use crate::message::Response;
-pub use crate::message::Share;
-pub use crate::message::Shares;
-pub use crate::message::Store;
-pub use crate::message::UnlockTimeout;
-pub use crate::message::agent::AgentAction;
-pub use crate::message::agent::AgentResponse;
-pub use crate::message::agent::SetInfo;
-pub use crate::message::decode;
-pub use crate::message::encode;
-use interprocess::local_socket::GenericNamespaced;
-use interprocess::local_socket::NameType;
-use interprocess::local_socket::ToNsName;
-pub use ssss::SsssConfig;
-
-/// The base file name used for the daemon IPC socket.
-const SOCKET_FILE_NAME: &str = "salus.sock";
-
-/// The base file name used for the `salus-agent` IPC socket.
-const AGENT_SOCKET_FILE_NAME: &str = "salus-agent.sock";
-
-/// The environment variable, shared by both the daemon and the client, that
-/// overrides the IPC socket location. Resolving it inside this crate keeps the
-/// two processes in sync from a single setting.
-const SOCKET_ENV: &str = "SALUS_SOCKET";
-
-/// The environment variable, shared by the agent and the client, that overrides
-/// the `salus-agent` IPC socket location.
-const AGENT_SOCKET_ENV: &str = "SALUS_AGENT_SOCKET";
-
-/// Where the IPC socket lives once resolved.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SocketTarget {
-    /// A namespaced socket addressed by a bare name (e.g. the Linux abstract
-    /// namespace), used by default where the platform supports it.
-    Namespaced(String),
-    /// A filesystem socket addressed by path, used for explicit overrides and
-    /// as the fallback on platforms without namespaced socket support.
-    File(PathBuf),
-}
-
-/// Resolve where an IPC socket should live.
+/// Run the salus login agent to completion, returning the process exit code.
 ///
-/// Precedence: an explicit per-side override wins, then the shared environment
-/// value, then a platform default (a namespaced name where supported, otherwise
-/// a file under the runtime/temp directory). `default_name` is the base socket
-/// file name used for both the namespaced name and the file fallback.
-fn socket_target(
-    override_path: Option<&str>,
-    env_socket: Option<&str>,
-    default_name: &str,
-) -> SocketTarget {
-    if let Some(path) = override_path.or(env_socket) {
-        SocketTarget::File(PathBuf::from(path))
-    } else if GenericNamespaced::is_supported() {
-        SocketTarget::Namespaced(default_name.to_string())
-    } else {
-        let dir = dirs2::runtime_dir().unwrap_or_else(std::env::temp_dir);
-        SocketTarget::File(dir.join(default_name))
-    }
-}
-
-/// Turn a resolved [`SocketTarget`] into an interprocess [`Name`].
-fn target_to_name<'a>(target: SocketTarget) -> Result<Name<'a>> {
-    let name = match target {
-        SocketTarget::Namespaced(name) => name.to_ns_name::<GenericNamespaced>()?,
-        SocketTarget::File(path) => path.to_fs_name::<GenericFilePath>()?,
-    };
-    Ok(name)
-}
-
-/// Get the socket name used for daemon interprocess communication.
-///
-/// `override_path`, when `Some`, is an explicit socket path supplied by the
-/// caller (CLI flag or config file) and takes precedence over the shared
-/// `SALUS_SOCKET` environment variable and the platform default.
-///
-/// # Errors
-///
-/// * An error can be thrown if the socket name cannot be created.
-///
-pub fn socket_name<'a>(override_path: Option<&str>) -> Result<Name<'a>> {
-    let env_socket = std::env::var(SOCKET_ENV).ok();
-    target_to_name(socket_target(
-        override_path,
-        env_socket.as_deref(),
-        SOCKET_FILE_NAME,
-    ))
-}
-
-/// Get the socket name used to talk to the `salus-agent`.
-///
-/// Mirrors [`socket_name`] but resolves the agent-specific override, the shared
-/// `SALUS_AGENT_SOCKET` environment variable, and the agent's platform default,
-/// so the agent and client always agree on a single location.
-///
-/// # Errors
-///
-/// * An error can be thrown if the socket name cannot be created.
-///
-pub fn agent_socket_name<'a>(override_path: Option<&str>) -> Result<Name<'a>> {
-    let env_socket = std::env::var(AGENT_SOCKET_ENV).ok();
-    target_to_name(socket_target(
-        override_path,
-        env_socket.as_deref(),
-        AGENT_SOCKET_FILE_NAME,
-    ))
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::PathBuf;
-
-    use super::{AGENT_SOCKET_FILE_NAME, SOCKET_FILE_NAME, SocketTarget, socket_target};
-
-    #[test]
-    fn override_wins_over_env() {
-        let target = socket_target(
-            Some("/tmp/override.sock"),
-            Some("/tmp/env.sock"),
-            SOCKET_FILE_NAME,
-        );
-        assert_eq!(
-            target,
-            SocketTarget::File(PathBuf::from("/tmp/override.sock"))
-        );
-    }
-
-    #[test]
-    fn env_used_when_no_override() {
-        let target = socket_target(None, Some("/tmp/env.sock"), SOCKET_FILE_NAME);
-        assert_eq!(target, SocketTarget::File(PathBuf::from("/tmp/env.sock")));
-    }
-
-    #[test]
-    fn default_used_when_nothing_configured() {
-        // With neither an override nor the env var set, the default depends on
-        // platform support: a bare namespaced name, or a file under the
-        // runtime/temp directory. Either way it must end with the base name.
-        match socket_target(None, None, SOCKET_FILE_NAME) {
-            SocketTarget::Namespaced(name) => assert_eq!(name, SOCKET_FILE_NAME),
-            SocketTarget::File(path) => {
-                assert_eq!(path.file_name().unwrap(), SOCKET_FILE_NAME);
-            }
-        }
-    }
-
-    #[test]
-    fn agent_default_uses_agent_base_name() {
-        // The agent default must resolve to the agent base name, not the
-        // daemon's, so the two sockets never collide.
-        match socket_target(None, None, AGENT_SOCKET_FILE_NAME) {
-            SocketTarget::Namespaced(name) => assert_eq!(name, AGENT_SOCKET_FILE_NAME),
-            SocketTarget::File(path) => {
-                assert_eq!(path.file_name().unwrap(), AGENT_SOCKET_FILE_NAME);
-            }
-        }
-    }
+/// Parses the command line, loads configuration, initializes tracing, loads the
+/// enrolled share sets from the OS keyring, then serves client requests over the
+/// agent IPC socket until the process is terminated. Any failure during setup is
+/// rendered to an exit code rather than propagated.
+#[must_use]
+pub async fn run_agent() -> i32 {
+    runtime::run::<Vec<&str>, &str>(None)
+        .await
+        .map_or_else(clap_or_error, success)
 }

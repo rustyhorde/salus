@@ -9,7 +9,8 @@ maintainer: Jason Ozias <jason.g.ozias@gmail.com>
 description: |
   Local secret store.
   A key/value store whose master encryption key is split into Shamir secret
-  shares and never persisted. Ships the salusd daemon and the salusc client.
+  shares and never persisted. Ships the salusd daemon, the salusc client, and
+  the salus-agent login agent.
 homepage: https://github.com/rustyhorde/salus
 license: MIT OR Apache-2.0
 
@@ -37,34 +38,50 @@ contents:
     dst: /usr/bin/salusc
     file_info:
       mode: 0755
+  - src: salus-agent-x86_64-unknown-linux-musl
+    dst: /usr/bin/salus-agent
+    file_info:
+      mode: 0755
 
   # Man pages
   - src: dist/salusd/salusd.1
     dst: /usr/share/man/man1/salusd.1
   - src: dist/salusc/salusc.1
     dst: /usr/share/man/man1/salusc.1
+  - src: dist/salus-agent/salus-agent.1
+    dst: /usr/share/man/man1/salus-agent.1
 
   # Shell completions
   - src: dist/salusd/salusd.bash
     dst: /usr/share/bash-completion/completions/salusd
   - src: dist/salusc/salusc.bash
     dst: /usr/share/bash-completion/completions/salusc
+  - src: dist/salus-agent/salus-agent.bash
+    dst: /usr/share/bash-completion/completions/salus-agent
   - src: dist/salusd/_salusd
     dst: /usr/share/zsh/vendor-completions/_salusd
   - src: dist/salusc/_salusc
     dst: /usr/share/zsh/vendor-completions/_salusc
+  - src: dist/salus-agent/_salus-agent
+    dst: /usr/share/zsh/vendor-completions/_salus-agent
   - src: dist/salusd/salusd.fish
     dst: /usr/share/fish/vendor_completions.d/salusd.fish
   - src: dist/salusc/salusc.fish
     dst: /usr/share/fish/vendor_completions.d/salusc.fish
+  - src: dist/salus-agent/salus-agent.fish
+    dst: /usr/share/fish/vendor_completions.d/salus-agent.fish
 
-  # Systemd user service
+  # Systemd user services
   - src: dist/salusd/salusd.service
     dst: /usr/lib/systemd/user/salusd.service
+  - src: dist/salus-agent/salus-agent.service
+    dst: /usr/lib/systemd/user/salus-agent.service
 
   # Example configuration
   - src: dist/salusd/salusd.toml.example
     dst: /usr/share/doc/salus/examples/salusd.toml.example
+  - src: dist/salus-agent/salus-agent.toml.example
+    dst: /usr/share/doc/salus/examples/salus-agent.toml.example
 
   # Licenses
   - src: dist/salusd/LICENSE-MIT

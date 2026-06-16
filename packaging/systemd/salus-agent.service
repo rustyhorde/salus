@@ -1,0 +1,21 @@
+[Unit]
+Description=Salus secret-store login agent
+Documentation=man:salus-agent(1)
+After=default.target
+
+[Service]
+Type=simple
+# salus-agent loads the enrolled shares from the OS keyring at login and serves
+# them to the client over its own IPC socket; systemd manages it in the
+# foreground. This unit is shipped by the AUR/DEB/RPM packages, which install the
+# binary at /usr/bin/salus-agent. If you installed via `cargo install salus-agent`
+# instead (binary at ~/.cargo/bin/salus-agent), copy this unit and change
+# ExecStart to %h/.cargo/bin/salus-agent.
+ExecStart=/usr/bin/salus-agent
+Restart=on-failure
+RestartSec=5s
+# salus-agent logs to its tracing file by default. Do NOT pass -e (stdout logging
+# is dev-only and not intended for service use).
+
+[Install]
+WantedBy=default.target

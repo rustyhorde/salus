@@ -16,7 +16,7 @@ for arg in $argv
         case --help -h
             echo "Usage: run_install.fish"
             echo ""
-            echo "Installs salusd and salusc to ~/.cargo/bin via 'cargo install'."
+            echo "Installs salusd, salusc and salus-agent to ~/.cargo/bin via 'cargo install'."
             exit 0
         case '*'
             echo "Unknown argument: $arg"
@@ -37,6 +37,7 @@ end
 
 run_step cargo install --path salusd --force --locked
 run_step cargo install --path salusc --force --locked
+run_step cargo install --path salus-agent --force --locked
 
 echo ""
 echo "All packages installed successfully."

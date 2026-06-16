@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Error, Result};
 use bon::Builder;
 use interprocess::local_socket::traits::tokio::SendHalf;
-use libsalus::{Action, Init, Response, Store, encode};
+use libsalus::{Action, Init, MAX_UNLOCK_SECONDS, Response, Store, UnlockTimeout, encode};
 use tokio::{
     io::AsyncWriteExt,
     spawn,
@@ -49,7 +49,8 @@ where
                 }
             }
             Action::Share(share) => self.add_share(share.share()).await?,
-            Action::Unlock => self.unlock().await?,
+            Action::Unlock(timeout) => self.unlock(timeout).await?,
+            Action::Lock => self.lock().await?,
             Action::Store(store) => self.store(store).await?,
             Action::Read(key) => self.read(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
@@ -112,31 +113,59 @@ where
         Ok(())
     }
 
-    async fn unlock(&mut self) -> Result<()> {
+    async fn unlock(&mut self, timeout: UnlockTimeout) -> Result<()> {
         let store_c = self.store.clone();
-        let key_timeout = self.key_timeout;
+        // Resolve how long the key should live: the configured default, an
+        // explicit duration (clamped to 24 h so a client cannot ask for more),
+        // or forever (no timer at all).
+        let hold_secs = match timeout {
+            UnlockTimeout::Default => Some(self.key_timeout),
+            UnlockTimeout::Seconds(secs) => Some(secs.min(MAX_UNLOCK_SECONDS)),
+            UnlockTimeout::Forever => None,
+        };
         match self.unlock_store(|store| -> Result<Response> {
             let response = store.unlock()?;
 
             if matches!(response, Response::Success) {
-                // We successfully unlocked the key, so set a timer to clear it from
-                // memory after `key_timeout` seconds. The timer captures the current
-                // unlock generation; a later unlock bumps the generation, so this
-                // timer firing becomes a no-op and cannot clear a fresher key.
-                let generation = store.key_generation();
-                let interval = sleep(Duration::from_secs(key_timeout));
-                let store_c = store_c.clone();
-                let _blah = spawn(async move {
-                    interval.await;
-                    warn!("Clearing unlocked key from memory");
-                    let mut store = match store_c.lock() {
-                        Ok(store) => store,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-                    store.clear_key_if_generation(generation);
-                });
+                if let Some(hold_secs) = hold_secs {
+                    // We successfully unlocked the key, so set a timer to clear it
+                    // from memory after `hold_secs` seconds. The timer captures the
+                    // current unlock generation; a later unlock or lock bumps the
+                    // generation, so this timer firing becomes a no-op and cannot
+                    // clear a fresher key.
+                    let generation = store.key_generation();
+                    let interval = sleep(Duration::from_secs(hold_secs));
+                    let store_c = store_c.clone();
+                    let _blah = spawn(async move {
+                        interval.await;
+                        warn!("Clearing unlocked key from memory");
+                        let mut store = match store_c.lock() {
+                            Ok(store) => store,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        store.clear_key_if_generation(generation);
+                    });
+                } else {
+                    warn!("Key unlocked with no auto-clear timer (forever)");
+                }
             }
             Ok(response)
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn lock(&mut self) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> {
+            store.lock();
+            warn!("Store locked; unlocked key cleared from memory");
+            Ok(Response::Success)
         }) {
             Ok(response) => {
                 self.response(response).await?;
