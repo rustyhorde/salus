@@ -241,6 +241,8 @@ pub mod keystore;
 mod logging;
 mod runtime;
 mod store;
+#[cfg(test)]
+mod test_keyring;
 mod utils;
 
 /// Run the salus login agent to completion, returning the process exit code.

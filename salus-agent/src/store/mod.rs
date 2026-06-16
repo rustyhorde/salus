@@ -179,3 +179,167 @@ impl AgentState {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use anyhow::Result;
+    use zeroize::Zeroizing;
+
+    use super::{AgentState, EnrolledSet, UnsealResult};
+    use crate::{keystore, test_keyring::guard};
+
+    fn enrolled(auto: &[&str], cached: Option<&str>) -> EnrolledSet {
+        EnrolledSet {
+            auto_shares: auto
+                .iter()
+                .map(|s| Zeroizing::new((*s).to_string()))
+                .collect(),
+            sealed_blob: Vec::new(),
+            cached_final: cached.map(|s| Zeroizing::new(s.to_string())),
+            cache_generation: 0,
+        }
+    }
+
+    fn state(sets: Vec<(&str, EnrolledSet)>) -> AgentState {
+        AgentState {
+            sets: sets.into_iter().map(|(n, e)| (n.to_string(), e)).collect(),
+        }
+    }
+
+    #[test]
+    fn is_empty_reflects_sets() {
+        assert!(state(vec![]).is_empty());
+        assert!(!state(vec![("a", enrolled(&["s0"], None))]).is_empty());
+    }
+
+    #[test]
+    fn status_reports_auto_count() {
+        let st = state(vec![("a", enrolled(&["s0", "s1"], None))]);
+        let status = st.status();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].name, "a");
+        assert_eq!(status[0].auto_count, 2);
+    }
+
+    #[test]
+    fn auto_shares_known_and_unknown() {
+        let st = state(vec![("a", enrolled(&["s0", "s1"], None))]);
+        assert_eq!(
+            st.auto_shares("a"),
+            Some(vec!["s0".to_string(), "s1".to_string()])
+        );
+        assert!(st.auto_shares("missing").is_none());
+    }
+
+    #[test]
+    fn unseal_unknown_set() -> Result<()> {
+        let mut st = state(vec![]);
+        assert!(matches!(st.unseal("a", "p", 0)?, UnsealResult::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn unseal_returns_cached_without_arming_timer() -> Result<()> {
+        let mut st = state(vec![("a", enrolled(&["s0"], Some("cached-share")))]);
+        match st.unseal("a", "ignored", 3600)? {
+            UnsealResult::Share { value, arm_timer } => {
+                assert_eq!(value, "cached-share");
+                assert!(arm_timer.is_none());
+            }
+            _ => panic!("expected a cached share result"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn clear_cache_only_on_matching_generation() {
+        let mut st = state(vec![("a", enrolled(&["s0"], Some("cached")))]);
+        st.clear_cache_if_generation("a", 99);
+        assert!(st.sets["a"].cached_final.is_some());
+        st.clear_cache_if_generation("a", 0);
+        assert!(st.sets["a"].cached_final.is_none());
+    }
+
+    #[test]
+    fn lock_one_clears_cache_and_bumps_generation() {
+        let mut st = state(vec![
+            ("a", enrolled(&["s0"], Some("cached"))),
+            ("b", enrolled(&["s0"], Some("cached"))),
+        ]);
+        st.lock(Some("a"));
+        assert!(st.sets["a"].cached_final.is_none());
+        assert_eq!(st.sets["a"].cache_generation, 1);
+        // The other set is untouched.
+        assert!(st.sets["b"].cached_final.is_some());
+        assert_eq!(st.sets["b"].cache_generation, 0);
+    }
+
+    #[test]
+    fn lock_all_clears_every_cache() {
+        let mut st = state(vec![
+            ("a", enrolled(&["s0"], Some("cached"))),
+            ("b", enrolled(&["s0"], Some("cached"))),
+        ]);
+        st.lock(None);
+        assert!(st.sets["a"].cached_final.is_none());
+        assert!(st.sets["b"].cached_final.is_none());
+    }
+
+    #[test]
+    fn load_populates_state_and_unseal_caches() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+
+        let mut st = AgentState::load()?;
+        assert_eq!(st.status().len(), 1);
+        assert_eq!(
+            st.auto_shares("alpha"),
+            Some(vec!["s0".into(), "s1".into()])
+        );
+
+        // Wrong passphrase is a soft failure.
+        assert!(matches!(st.unseal("alpha", "wrong", 0)?, UnsealResult::Bad));
+
+        // A fresh correct unseal with caching enabled arms a clear timer.
+        match st.unseal("alpha", "pass", 3600)? {
+            UnsealResult::Share { value, arm_timer } => {
+                assert_eq!(value, "final");
+                assert_eq!(arm_timer, Some(1));
+            }
+            _ => panic!("expected a fresh share result"),
+        }
+        // The next unseal is served from the cache, so it does not re-arm.
+        match st.unseal("alpha", "pass", 3600)? {
+            UnsealResult::Share { arm_timer, .. } => assert!(arm_timer.is_none()),
+            _ => panic!("expected a cached share result"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unseal_without_caching_does_not_arm_timer() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "beta",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        let mut st = AgentState::load()?;
+        match st.unseal("beta", "pass", 0)? {
+            UnsealResult::Share { value, arm_timer } => {
+                assert_eq!(value, "final");
+                assert!(arm_timer.is_none());
+            }
+            _ => panic!("expected a share result"),
+        }
+        Ok(())
+    }
+}

@@ -539,12 +539,19 @@ fn choose_set(sets: &[SetInfo]) -> Result<String> {
         stdout().flush()?;
         let mut line = String::new();
         let _read = stdin().read_line(&mut line)?;
-        match line.trim().parse::<usize>() {
-            Ok(choice) if choice >= 1 && choice <= sets.len() => {
-                return Ok(sets[choice - 1].name.clone());
-            }
-            _ => eprintln!("{}", "Invalid selection, try again".red()),
+        match parse_set_choice(&line, sets.len()) {
+            Some(idx) => return Ok(sets[idx].name.clone()),
+            None => eprintln!("{}", "Invalid selection, try again".red()),
         }
+    }
+}
+
+/// Parse a 1-based set selection into a 0-based index, or `None` when the input
+/// is not a whole number in `1..=len`.
+fn parse_set_choice(line: &str, len: usize) -> Option<usize> {
+    match line.trim().parse::<usize>() {
+        Ok(choice) if choice >= 1 && choice <= len => Some(choice - 1),
+        _ => None,
     }
 }
 
@@ -552,7 +559,25 @@ fn choose_set(sets: &[SetInfo]) -> Result<String> {
 mod test {
     use libsalus::{MAX_UNLOCK_SECONDS, UnlockTimeout};
 
-    use super::parse_unlock_timeout;
+    use super::{parse_set_choice, parse_unlock_timeout};
+
+    #[test]
+    fn set_choice_valid_is_zero_based() {
+        assert_eq!(parse_set_choice("1\n", 3), Some(0));
+        assert_eq!(parse_set_choice("  3 ", 3), Some(2));
+    }
+
+    #[test]
+    fn set_choice_out_of_range_is_none() {
+        assert_eq!(parse_set_choice("0", 3), None);
+        assert_eq!(parse_set_choice("4", 3), None);
+    }
+
+    #[test]
+    fn set_choice_non_numeric_is_none() {
+        assert_eq!(parse_set_choice("abc", 3), None);
+        assert_eq!(parse_set_choice("", 3), None);
+    }
 
     #[test]
     fn none_is_default() {

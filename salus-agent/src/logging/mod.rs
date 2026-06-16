@@ -120,11 +120,41 @@ fn log_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
-    use super::log_file_in;
+    use config::{Config, FileFormat};
+    use tracing::level_filters::LevelFilter;
+
+    use super::{directives, log_file_in};
+    use crate::config::ConfigSalusAgent;
 
     #[test]
     fn log_file_in_composes_app_dir_and_extension() {
         let path = log_file_in(Path::new("/base"), "salus-agent");
         assert_eq!(path, Path::new("/base/salus-agent/salus-agent.log"));
+    }
+
+    #[test]
+    fn directives_map_each_level_filter() {
+        let cfg = ConfigSalusAgent::default();
+        assert_eq!(directives(&cfg, LevelFilter::TRACE), "trace");
+        assert_eq!(directives(&cfg, LevelFilter::DEBUG), "debug");
+        assert_eq!(directives(&cfg, LevelFilter::INFO), "info");
+        assert_eq!(directives(&cfg, LevelFilter::WARN), "warn");
+        assert_eq!(directives(&cfg, LevelFilter::ERROR), "error");
+        // `OFF` has no level, so the base falls back to `info`.
+        assert_eq!(directives(&cfg, LevelFilter::OFF), "info");
+    }
+
+    #[test]
+    fn directives_appends_configured_directives() {
+        let cfg: ConfigSalusAgent = Config::builder()
+            .add_source(config::File::from_str(
+                "[tracing]\ndirectives = \"mycrate=debug\"\n",
+                FileFormat::Toml,
+            ))
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+        assert_eq!(directives(&cfg, LevelFilter::INFO), "info,mycrate=debug");
     }
 }

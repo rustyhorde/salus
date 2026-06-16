@@ -197,14 +197,93 @@ fn config_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
-    use config::{Config, Map};
+    use config::{Config, ConfigError, Map, Source, Value, ValueKind};
 
-    use super::{ConfigSalusAgent, DEFAULT_PASSPHRASE_CACHE_TIMEOUT, config_file_in, env_source};
+    use super::{
+        ConfigSalusAgent, DEFAULT_PASSPHRASE_CACHE_TIMEOUT, PathDefaults, Tracing, config_file_in,
+        env_source, load,
+    };
+
+    /// A test double that is both a CLI [`Source`] and a [`PathDefaults`], so a
+    /// single value drives `load` end-to-end without the real `runtime::cli::Cli`.
+    #[derive(Clone, Debug)]
+    struct TestCli {
+        config_path: Option<String>,
+        socket_path: Option<String>,
+    }
+
+    impl Source for TestCli {
+        fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+            Box::new(self.clone())
+        }
+
+        fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+            let mut map = Map::new();
+            if let Some(socket_path) = &self.socket_path {
+                let _old = map.insert(
+                    "socket_path".to_string(),
+                    Value::new(None, ValueKind::String(socket_path.clone())),
+                );
+            }
+            Ok(map)
+        }
+    }
+
+    impl PathDefaults for TestCli {
+        // A prefix no real environment uses, so `load` cannot pick up stray vars.
+        fn env_prefix(&self) -> String {
+            "SALUSAGENTTEST".to_string()
+        }
+        fn app_name(&self) -> String {
+            "salus-agent-test".to_string()
+        }
+        fn config_absolute_path(&self) -> Option<String> {
+            self.config_path.clone()
+        }
+        fn tracing_absolute_path(&self) -> Option<String> {
+            None
+        }
+    }
 
     #[test]
     fn config_file_in_composes_app_dir_and_extension() {
         let path = config_file_in(Path::new("/base"), "salus-agent");
         assert_eq!(path, Path::new("/base/salus-agent/salus-agent.toml"));
+    }
+
+    #[test]
+    fn defaults_match_documented_values() {
+        let cfg = ConfigSalusAgent::default();
+        assert_eq!(cfg.verbose(), 0);
+        assert_eq!(cfg.quiet(), 0);
+        assert!(!cfg.enable_std_output());
+        assert_eq!(
+            cfg.passphrase_cache_timeout(),
+            DEFAULT_PASSPHRASE_CACHE_TIMEOUT
+        );
+        assert!(cfg.socket_path().is_none());
+
+        let tracing = Tracing::default();
+        assert!(!tracing.with_target());
+        assert!(!tracing.with_level());
+        assert!(tracing.directives().is_none());
+    }
+
+    #[test]
+    fn load_layers_file_env_and_cli() {
+        // Point at a non-existent config file so the (optional) file source is
+        // skipped, then let the CLI source supply an explicitly-set flag.
+        let cli = TestCli {
+            config_path: Some("/nonexistent/salus-agent-test.toml".to_string()),
+            socket_path: Some("/tmp/agent-test.sock".to_string()),
+        };
+        let cfg: ConfigSalusAgent = load(&cli, &cli).unwrap();
+        // The CLI socket override wins; everything else falls back to defaults.
+        assert_eq!(cfg.socket_path().as_deref(), Some("/tmp/agent-test.sock"));
+        assert_eq!(
+            cfg.passphrase_cache_timeout(),
+            DEFAULT_PASSPHRASE_CACHE_TIMEOUT
+        );
     }
 
     #[test]

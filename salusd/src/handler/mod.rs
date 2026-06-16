@@ -10,10 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Error, Result};
 use bon::Builder;
-use interprocess::local_socket::traits::tokio::SendHalf;
 use libsalus::{Action, Init, MAX_UNLOCK_SECONDS, Response, Store, UnlockTimeout, encode};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncWrite, AsyncWriteExt},
     spawn,
     time::{Duration, sleep},
 };
@@ -24,7 +23,7 @@ use crate::store::ShareStore;
 #[derive(Builder)]
 pub(crate) struct ActionHandler<T>
 where
-    T: SendHalf + Unpin,
+    T: AsyncWrite + Unpin,
 {
     sender: T,
     store: Arc<Mutex<ShareStore>>,
@@ -34,7 +33,7 @@ where
 
 impl<T> ActionHandler<T>
 where
-    T: SendHalf + Unpin,
+    T: AsyncWrite + Unpin,
 {
     pub(crate) async fn action_handler(&mut self, message: Action) -> Result<()> {
         match message {
@@ -236,5 +235,83 @@ where
             Err(poisoned) => poisoned.into_inner(),
         };
         store_fn(&mut store)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::{Arc, Mutex};
+
+    use anyhow::Result;
+    use libsalus::{Action, Response, Store, decode};
+    use redb::Database;
+
+    use super::ActionHandler;
+    use crate::store::ShareStore;
+
+    fn temp_store() -> Arc<Mutex<ShareStore>> {
+        let db = Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .unwrap();
+        Arc::new(Mutex::new(
+            ShareStore::builder().redb(Arc::new(Mutex::new(db))).build(),
+        ))
+    }
+
+    fn handler(store: Arc<Mutex<ShareStore>>) -> ActionHandler<Vec<u8>> {
+        ActionHandler::builder()
+            .sender(Vec::<u8>::new())
+            .store(store)
+            .key_timeout(0u64)
+            .build()
+    }
+
+    async fn run(action: Action) -> Result<Response> {
+        let mut handler = handler(temp_store());
+        handler.action_handler(action).await?;
+        decode::<Response>(&handler.sender)
+    }
+
+    #[tokio::test]
+    async fn gen_shares_responds_with_shares() -> Result<()> {
+        match run(Action::GenShares(5, 3)).await? {
+            Response::Shares(shares) => assert_eq!(shares.shares().len(), 5),
+            other => panic!("expected shares, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_threshold_responds_with_default() -> Result<()> {
+        assert!(matches!(
+            run(Action::GetThreshold).await?,
+            Response::Threshold(3)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_before_unlock_errors() -> Result<()> {
+        assert!(matches!(
+            run(Action::Read("k".to_string())).await?,
+            Response::Error(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_before_unlock_errors() -> Result<()> {
+        let store = Store::builder().key("k").value("v").build();
+        assert!(matches!(
+            run(Action::Store(store)).await?,
+            Response::Error(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lock_responds_success() -> Result<()> {
+        assert!(matches!(run(Action::Lock).await?, Response::Success));
+        Ok(())
     }
 }

@@ -10,10 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bon::Builder;
-use interprocess::local_socket::traits::tokio::SendHalf;
 use libsalus::{AgentAction, AgentResponse, encode};
 use tokio::{
-    io::AsyncWriteExt,
+    io::{AsyncWrite, AsyncWriteExt},
     spawn,
     time::{Duration, sleep},
 };
@@ -24,7 +23,7 @@ use crate::store::{AgentState, UnsealResult};
 #[derive(Builder)]
 pub(crate) struct AgentHandler<T>
 where
-    T: SendHalf + Unpin,
+    T: AsyncWrite + Unpin,
 {
     sender: T,
     store: Arc<Mutex<AgentState>>,
@@ -34,7 +33,7 @@ where
 
 impl<T> AgentHandler<T>
 where
-    T: SendHalf + Unpin,
+    T: AsyncWrite + Unpin,
 {
     pub(crate) async fn handle(&mut self, message: AgentAction) -> Result<()> {
         let response = match message {
@@ -111,5 +110,135 @@ where
             Err(poisoned) => poisoned.into_inner(),
         };
         store_fn(&mut store)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::{Arc, Mutex};
+
+    use anyhow::Result;
+    use libsalus::{AgentAction, AgentResponse, decode};
+
+    use super::AgentHandler;
+    use crate::{keystore, store::AgentState, test_keyring::guard};
+
+    fn handler(store: Arc<Mutex<AgentState>>, cache_timeout: u64) -> AgentHandler<Vec<u8>> {
+        AgentHandler::builder()
+            .sender(Vec::<u8>::new())
+            .store(store)
+            .cache_timeout(cache_timeout)
+            .build()
+    }
+
+    async fn run(
+        state: AgentState,
+        cache_timeout: u64,
+        action: AgentAction,
+    ) -> Result<AgentResponse> {
+        let mut handler = handler(Arc::new(Mutex::new(state)), cache_timeout);
+        handler.handle(action).await?;
+        decode::<AgentResponse>(&handler.sender)
+    }
+
+    fn enroll_alpha() -> Result<()> {
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn status_responds_with_empty_sets() -> Result<()> {
+        let resp = run(AgentState::default(), 0, AgentAction::Status).await?;
+        assert!(matches!(resp, AgentResponse::Status { sets } if sets.is_empty()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_auto_shares_on_empty_is_unenrolled() -> Result<()> {
+        let resp = run(
+            AgentState::default(),
+            0,
+            AgentAction::GetAutoShares {
+                set: "alpha".into(),
+            },
+        )
+        .await?;
+        assert!(matches!(resp, AgentResponse::Unenrolled));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_auto_shares_known_and_unknown() -> Result<()> {
+        // Touch the keyring only while building the states; drop the guard before
+        // any `.await` so a `MutexGuard` is never held across an await point.
+        let (known, unknown) = {
+            let _g = guard();
+            enroll_alpha()?;
+            (AgentState::load()?, AgentState::load()?)
+        };
+        let resp = run(
+            known,
+            0,
+            AgentAction::GetAutoShares {
+                set: "alpha".into(),
+            },
+        )
+        .await?;
+        assert!(matches!(resp, AgentResponse::AutoShares(shares) if shares.len() == 2));
+
+        let resp = run(
+            unknown,
+            0,
+            AgentAction::GetAutoShares {
+                set: "missing".into(),
+            },
+        )
+        .await?;
+        assert!(matches!(resp, AgentResponse::UnknownSet));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unseal_bad_passphrase_and_success() -> Result<()> {
+        let (bad, good) = {
+            let _g = guard();
+            enroll_alpha()?;
+            (AgentState::load()?, AgentState::load()?)
+        };
+        let resp = run(
+            bad,
+            0,
+            AgentAction::UnsealFinal {
+                set: "alpha".into(),
+                passphrase: "wrong".into(),
+            },
+        )
+        .await?;
+        assert!(matches!(resp, AgentResponse::BadPassphrase));
+
+        // cache_timeout = 0 so no clear timer is spawned.
+        let resp = run(
+            good,
+            0,
+            AgentAction::UnsealFinal {
+                set: "alpha".into(),
+                passphrase: "pass".into(),
+            },
+        )
+        .await?;
+        assert!(matches!(resp, AgentResponse::FinalShare(share) if share == "final"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lock_responds_with_status() -> Result<()> {
+        let resp = run(AgentState::default(), 0, AgentAction::Lock { set: None }).await?;
+        assert!(matches!(resp, AgentResponse::Status { .. }));
+        Ok(())
     }
 }

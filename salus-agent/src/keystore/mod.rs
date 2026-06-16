@@ -372,7 +372,17 @@ pub fn load_sealed_blob(name: &str) -> Result<Option<Vec<u8>>> {
 
 #[cfg(test)]
 mod test {
-    use super::{seal, unseal};
+    use anyhow::Result;
+
+    use super::{
+        enroll_final_only, enroll_full, forget, forget_all, list_sets, load_auto_shares,
+        load_sealed_blob, read_registry, seal, shared_auto_count, unseal,
+    };
+    use crate::test_keyring::guard;
+
+    fn shares(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("share-{i}")).collect()
+    }
 
     #[test]
     fn seal_unseal_round_trip() {
@@ -391,5 +401,134 @@ mod test {
     #[test]
     fn malformed_blob_errors() {
         assert!(unseal(b"too-short", "whatever").is_err());
+    }
+
+    #[test]
+    fn read_registry_defaults_when_absent() -> Result<()> {
+        let _g = guard();
+        let registry = read_registry()?;
+        assert_eq!(registry.shared_auto_count, 0);
+        assert!(registry.sets.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_full_shared_round_trips() -> Result<()> {
+        let _g = guard();
+        // 3 shares: 2 automatic (shared) + 1 sealed final.
+        enroll_full("alpha", &shares(3), "pass", false, false)?;
+
+        let sets = list_sets()?;
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].name, "alpha");
+        assert_eq!(sets[0].auto_count, 2);
+        assert_eq!(shared_auto_count()?, Some(2));
+
+        let auto = load_auto_shares("alpha")?;
+        assert_eq!(auto, vec!["share-0".to_string(), "share-1".to_string()]);
+
+        let blob = load_sealed_blob("alpha")?.expect("sealed blob present");
+        assert_eq!(unseal(&blob, "pass")?.as_deref(), Some("share-2"));
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_full_independent_uses_per_set_shares() -> Result<()> {
+        let _g = guard();
+        enroll_full("beta", &shares(3), "pass", true, false)?;
+        // Independent sets do not establish the shared auto-share pool.
+        assert_eq!(shared_auto_count()?, None);
+        assert_eq!(load_auto_shares("beta")?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_full_rejects_single_share() {
+        let _g = guard();
+        assert!(enroll_full("gamma", &shares(1), "pass", false, false).is_err());
+    }
+
+    #[test]
+    fn enroll_full_rejects_duplicate_without_force() -> Result<()> {
+        let _g = guard();
+        enroll_full("delta", &shares(3), "pass", false, false)?;
+        assert!(enroll_full("delta", &shares(3), "pass", false, false).is_err());
+        // With force, the duplicate replaces the existing set.
+        enroll_full("delta", &shares(4), "pass2", false, true)?;
+        let sets = list_sets()?;
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].auto_count, 3);
+        let blob = load_sealed_blob("delta")?.expect("sealed blob present");
+        assert_eq!(unseal(&blob, "pass2")?.as_deref(), Some("share-3"));
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_final_only_reuses_shared_shares() -> Result<()> {
+        let _g = guard();
+        enroll_full("alpha", &shares(3), "pass", false, false)?;
+        enroll_final_only("epsilon", "final-share", "secret", false)?;
+
+        let sets = list_sets()?;
+        assert_eq!(sets.len(), 2);
+        let blob = load_sealed_blob("epsilon")?.expect("sealed blob present");
+        assert_eq!(unseal(&blob, "secret")?.as_deref(), Some("final-share"));
+        Ok(())
+    }
+
+    #[test]
+    fn enroll_final_only_requires_shared_shares() {
+        let _g = guard();
+        assert!(enroll_final_only("epsilon", "final-share", "secret", false).is_err());
+    }
+
+    #[test]
+    fn forget_unknown_returns_false() -> Result<()> {
+        let _g = guard();
+        assert!(!forget("nope")?);
+        Ok(())
+    }
+
+    #[test]
+    fn forget_removes_set_and_last_clears_shared() -> Result<()> {
+        let _g = guard();
+        enroll_full("alpha", &shares(3), "pass", false, false)?;
+        enroll_final_only("beta", "final", "secret", false)?;
+
+        assert!(forget("beta")?);
+        assert_eq!(list_sets()?.len(), 1);
+        // The shared auto-shares survive while a set still uses them.
+        assert_eq!(shared_auto_count()?, Some(2));
+
+        // Removing the last set also clears the shared auto-shares and registry.
+        assert!(forget("alpha")?);
+        assert!(list_sets()?.is_empty());
+        assert_eq!(shared_auto_count()?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn forget_all_clears_everything() -> Result<()> {
+        let _g = guard();
+        enroll_full("alpha", &shares(3), "pass", false, false)?;
+        enroll_full("beta", &shares(3), "pass", true, false)?;
+
+        forget_all()?;
+        assert!(list_sets()?.is_empty());
+        assert_eq!(shared_auto_count()?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn load_auto_shares_unknown_errors() {
+        let _g = guard();
+        assert!(load_auto_shares("missing").is_err());
+    }
+
+    #[test]
+    fn load_sealed_blob_absent_returns_none() -> Result<()> {
+        let _g = guard();
+        assert!(load_sealed_blob("missing")?.is_none());
+        Ok(())
     }
 }

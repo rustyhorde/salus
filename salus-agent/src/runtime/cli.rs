@@ -148,4 +148,32 @@ mod test {
         let cli = Cli::try_parse_from(["salus-agent"]).unwrap();
         assert_eq!(cli.env_prefix(), "SALUSAGENT");
     }
+
+    #[test]
+    fn collect_includes_quiet() {
+        let cli = Cli::try_parse_from(["salus-agent", "-qq"]).unwrap();
+        let map = cli.collect().unwrap();
+        assert!(map.contains_key("quiet"));
+        assert!(!map.contains_key("verbose"));
+    }
+
+    #[test]
+    fn path_defaults_expose_overrides() {
+        let cli =
+            Cli::try_parse_from(["salus-agent", "-c", "/tmp/cfg.toml", "-t", "/tmp/trace.log"])
+                .unwrap();
+        assert_eq!(cli.app_name(), "salus-agent");
+        assert_eq!(cli.config_absolute_path().as_deref(), Some("/tmp/cfg.toml"));
+        assert_eq!(
+            cli.tracing_absolute_path().as_deref(),
+            Some("/tmp/trace.log")
+        );
+    }
+
+    #[test]
+    fn path_defaults_default_to_none() {
+        let cli = Cli::try_parse_from(["salus-agent"]).unwrap();
+        assert!(cli.config_absolute_path().is_none());
+        assert!(cli.tracing_absolute_path().is_none());
+    }
 }

@@ -360,7 +360,10 @@ pub fn agent_socket_name<'a>(override_path: Option<&str>) -> Result<Name<'a>> {
 mod test {
     use std::path::PathBuf;
 
-    use super::{AGENT_SOCKET_FILE_NAME, SOCKET_FILE_NAME, SocketTarget, socket_target};
+    use super::{
+        AGENT_SOCKET_FILE_NAME, SOCKET_FILE_NAME, SocketTarget, agent_socket_name, socket_name,
+        socket_target, target_to_name,
+    };
 
     #[test]
     fn override_wins_over_env() {
@@ -404,5 +407,17 @@ mod test {
                 assert_eq!(path.file_name().unwrap(), AGENT_SOCKET_FILE_NAME);
             }
         }
+    }
+
+    #[test]
+    fn target_to_name_builds_namespaced_and_file() {
+        assert!(target_to_name(SocketTarget::Namespaced(SOCKET_FILE_NAME.to_string())).is_ok());
+        assert!(target_to_name(SocketTarget::File(PathBuf::from("/tmp/x.sock"))).is_ok());
+    }
+
+    #[test]
+    fn socket_name_with_override_resolves() {
+        assert!(socket_name(Some("/tmp/override.sock")).is_ok());
+        assert!(agent_socket_name(Some("/tmp/agent-override.sock")).is_ok());
     }
 }
