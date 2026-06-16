@@ -18,7 +18,8 @@ getset = "0.1.7"
 interprocess = { version = "2.4.2", features = ["async", "tokio"] }
 keyring = { version = "3.6.3", default-features = false, features = [
   "apple-native",
-  "sync-secret-service",
+  "async-secret-service",
+  "async-io",
   "crypto-rust",
 ] }
 rustversion = "1.0.22"
