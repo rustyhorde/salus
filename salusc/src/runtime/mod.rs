@@ -7,9 +7,11 @@
 // modified, or distributed except according to those terms.
 
 use std::ffi::OsString;
+use std::io::IsTerminal as _;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
+use tokio::io::AsyncReadExt;
 
 use crate::{
     config::load,
@@ -46,7 +48,44 @@ where
         } => inter.shares(num_shares, threshold).await?,
         Commands::Unlock { set, duration } => inter.unlock(set, duration).await?,
         Commands::Lock => inter.lock().await?,
-        Commands::Store { key, value } => inter.store(key, value).await?,
+        Commands::Store {
+            key,
+            value,
+            max_value_bytes,
+        } => {
+            const DEFAULT_MAX: usize = 65_536; // 64 KiB
+            let max_bytes = max_value_bytes
+                .or_else(|| config.store_max_value_bytes())
+                .unwrap_or(DEFAULT_MAX);
+
+            let value = if let Some(v) = value {
+                v
+            } else {
+                if std::io::stdin().is_terminal() {
+                    eprint!("Value: ");
+                }
+                let mut buf = String::new();
+                let _ = tokio::io::stdin()
+                    .take(max_bytes as u64 + 1)
+                    .read_to_string(&mut buf)
+                    .await?;
+                if buf.len() > max_bytes {
+                    bail!(
+                        "stdin input exceeds {max_bytes} bytes; \
+                         increase with --max-value-bytes or SALUSC_STORE_MAX_VALUE_BYTES"
+                    );
+                }
+                if buf.ends_with('\n') {
+                    let _ = buf.pop();
+                    if buf.ends_with('\r') {
+                        let _ = buf.pop();
+                    }
+                }
+                buf
+            };
+            inter.store(key, value).await?;
+        }
+
         Commands::Read { key_opt } => inter.read(key_opt).await?,
         Commands::Find { regex } => inter.find(regex).await?,
         Commands::Enroll {

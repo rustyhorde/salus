@@ -124,9 +124,12 @@ pub(crate) enum Commands {
         /// The key to store the value under
         #[arg(short, long)]
         key: String,
-        /// The value to store
+        /// The value to store; if omitted, reads from stdin
         #[arg(short, long)]
-        value: String,
+        value: Option<String>,
+        /// Maximum bytes to read from stdin (default: 65536)
+        #[arg(long)]
+        max_value_bytes: Option<usize>,
     },
     Read {
         /// The key to read the value from

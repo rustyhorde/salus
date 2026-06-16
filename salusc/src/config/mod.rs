@@ -27,6 +27,10 @@ pub(crate) struct ConfigSalusc {
     /// Optional override for the `salus-agent` IPC socket path. Falls back to the
     /// shared `SALUS_AGENT_SOCKET` env var and then the platform default.
     agent_socket_path: Option<String>,
+    /// Optional maximum bytes to read from stdin for the `store` subcommand.
+    /// When `None`, the default of 65536 (64 KiB) is used. Can be overridden
+    /// per-invocation with the `--max-value-bytes` flag.
+    store_max_value_bytes: Option<usize>,
 }
 
 impl ConfigSalusc {
@@ -36,6 +40,10 @@ impl ConfigSalusc {
 
     pub(crate) fn agent_socket_path(&self) -> Option<&str> {
         self.agent_socket_path.as_deref()
+    }
+
+    pub(crate) fn store_max_value_bytes(&self) -> Option<usize> {
+        self.store_max_value_bytes
     }
 }
 
