@@ -6,6 +6,8 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
+use std::path::PathBuf;
+
 use clap::error::ErrorKind;
 
 #[derive(thiserror::Error, Debug)]
@@ -28,6 +30,11 @@ pub(crate) enum Error {
     TracingInit,
     #[error("Unable to initialize the database")]
     DatabaseInit,
+    #[error(
+        "Another salusd may already be running and holding a lock on {0}; \
+         stop the other instance before starting salusd"
+    )]
+    DatabaseLocked(PathBuf),
     #[error("Unable to generate a nonce key")]
     NonceKeyGen,
     #[allow(dead_code)]

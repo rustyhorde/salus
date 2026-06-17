@@ -12,8 +12,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::Result;
-use redb::{AccessGuard, Database, Key, ReadableDatabase, TableDefinition, Value};
+use anyhow::{Context, Result};
+use redb::{AccessGuard, Database, DatabaseError, Key, ReadableDatabase, TableDefinition, Value};
 
 use crate::{
     config::PathDefaults,
@@ -37,8 +37,30 @@ pub(crate) const CHECK_KEY_KEY: &str = "CHECK_KEY";
 pub(crate) fn initialize_redb<T: PathDefaults>(defaults: &T) -> Result<Arc<Mutex<Database>>> {
     let redb_path = database_absolute_path(defaults)?;
     ensure_parent_dir(&redb_path)?;
-    let db = Database::create(redb_path)?;
+    let db = open_database(&redb_path)?;
     Ok(Arc::new(Mutex::new(db)))
+}
+
+/// Open (creating if needed) the redb database at `path`, mapping redb's
+/// lock-contention error into an actionable [`Error::DatabaseLocked`] that names
+/// the path and the likely cause (another `salusd` already running).
+fn open_database(path: &Path) -> Result<Database> {
+    match Database::create(path) {
+        Ok(db) => Ok(db),
+        Err(DatabaseError::DatabaseAlreadyOpen) => {
+            Err(anyhow::Error::new(DatabaseError::DatabaseAlreadyOpen))
+                .with_context(|| Error::DatabaseLocked(path.to_path_buf()))
+        }
+        // Known variants listed explicitly to satisfy `non_exhaustive_omitted_patterns`;
+        // the trailing `Err(other)` forwards any future `#[non_exhaustive]` variant.
+        Err(
+            other @ (DatabaseError::RepairAborted
+            | DatabaseError::UpgradeRequired(_)
+            | DatabaseError::TransactionInProgress
+            | DatabaseError::Storage(_))
+            | other,
+        ) => Err(anyhow::Error::new(other)),
+    }
 }
 
 pub(crate) fn write_value<'a, K, V>(
@@ -115,13 +137,58 @@ pub(crate) fn unlock_redb(
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
+    use std::{
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::db_file_in;
+    use anyhow::{Result, bail};
+
+    use super::{db_file_in, open_database};
+    use crate::error::Error;
 
     #[test]
     fn db_file_in_composes_app_dir_and_extension() {
         let path = db_file_in(Path::new("/base"), "salusd");
         assert_eq!(path, Path::new("/base/salusd/salusd.redb"));
+    }
+
+    fn unique_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let name = format!("salusd-test-{}-{nanos}.redb", std::process::id());
+        std::env::temp_dir().join(name)
+    }
+
+    #[test]
+    fn open_database_reports_lock_contention() -> Result<()> {
+        let path = unique_db_path();
+        // Hold the database open so the second open contends for the lock.
+        let _first = open_database(&path)?;
+
+        let result = open_database(&path);
+        let cleanup = || {
+            drop(std::fs::remove_file(&path));
+        };
+
+        let Err(err) = result else {
+            cleanup();
+            bail!(
+                "expected lock contention error opening {} twice",
+                path.display()
+            );
+        };
+
+        let matched =
+            matches!(err.downcast_ref::<Error>(), Some(Error::DatabaseLocked(p)) if p == &path);
+        cleanup();
+        if !matched {
+            bail!(
+                "expected Error::DatabaseLocked({}), got: {err:?}",
+                path.display()
+            );
+        }
+        Ok(())
     }
 }
