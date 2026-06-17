@@ -110,7 +110,7 @@ where
         };
 
         let (mut receiver, sender) = conn.split();
-        let (tx, mut rx) = unbounded_channel::<Action>();
+        let (tx, mut rx) = unbounded_channel::<Incoming>();
         let share_store_c = share_store.clone();
         let kt = config.key_timeout();
         let _client_recv_handle = spawn(async move {
@@ -119,8 +119,12 @@ where
                 .store(share_store_c)
                 .key_timeout(kt)
                 .build();
-            while let Some(message) = rx.recv().await {
-                if let Err(e) = action_handler.action_handler(message).await {
+            while let Some(incoming) = rx.recv().await {
+                let result = match incoming {
+                    Incoming::Action(message) => action_handler.action_handler(message).await,
+                    Incoming::Undecodable => action_handler.decode_error().await,
+                };
+                if let Err(e) = result {
                     error!("Error handling client message: {e}");
                 }
             }
@@ -134,18 +138,32 @@ where
     }
 }
 
+/// A decoded request, or a signal that the request could not be decoded.
+///
+/// The receive task decodes the incoming `Action`, but the send half lives in
+/// the handler task, so a decode failure is forwarded over the channel as
+/// [`Incoming::Undecodable`] for the handler to answer with a `Response::Error`
+/// rather than silently dropping the connection.
+enum Incoming {
+    Action(Action),
+    Undecodable,
+}
+
 async fn handle_conn<T: RecvHalf + Unpin>(
     receiver: &mut T,
-    txc: UnboundedSender<Action>,
+    txc: UnboundedSender<Incoming>,
 ) -> Result<()> {
     // Describe the receive operation as receiving a line into our big buffer.
     let mut msg_buf = Vec::new();
     let _msg_size = receiver.read_to_end(&mut msg_buf).await?;
 
     // A forged length prefix cannot trigger an unbounded allocation here:
-    // `decode` enforces `MAX_MESSAGE_SIZE`. Malformed input is silently dropped.
-    if let Ok(message) = decode::<Action>(&msg_buf) {
-        txc.send(message)?;
+    // `decode` enforces `MAX_MESSAGE_SIZE`. A request we cannot decode (for
+    // example, an action from a client newer than this daemon) is forwarded as
+    // `Undecodable` so the handler can reply with a clear error.
+    match decode::<Action>(&msg_buf) {
+        Ok(message) => txc.send(Incoming::Action(message))?,
+        Err(_) => txc.send(Incoming::Undecodable)?,
     }
 
     Ok(())

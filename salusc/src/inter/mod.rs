@@ -71,6 +71,15 @@ impl Inter {
         // Describe the receive operation as receiving until a newline into our buffer.
         let mut msg_buf = Vec::new();
         let _msg_size = recver.read_to_end(&mut msg_buf).await?;
+        // An empty buffer means the daemon closed the connection without writing a
+        // response (e.g. it could not decode our request because it predates an
+        // action this client now sends). Surface that clearly instead of letting
+        // `decode` fail with an opaque `UnexpectedEnd`.
+        if msg_buf.is_empty() {
+            bail!(
+                "salusd closed the connection without responding; it may be out of date — restart or reinstall the daemon"
+            );
+        }
         decode::<Response>(&msg_buf)
     }
 
@@ -966,6 +975,33 @@ mod test {
 
         let received = handle.await??;
         assert!(matches!(received.as_slice(), [Action::Lock]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_reports_empty_response_clearly() -> Result<()> {
+        // Simulate a daemon that closes the connection without writing a
+        // response (e.g. an older daemon that could not decode the action). The
+        // client must surface a clear error, not an opaque bincode `UnexpectedEnd`.
+        let path = unique_socket_path("send-empty");
+        let name = path.as_path().to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        let handle = tokio::spawn(async move {
+            let conn = listener.accept().await?;
+            let (mut recver, sender) = conn.split();
+            let mut buf = Vec::new();
+            let _n = recver.read_to_end(&mut buf).await?;
+            drop(sender); // close without responding
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let result = inter_for(&path).send(Action::Lock).await;
+        assert!(result.is_err(), "empty response should be an error");
+        if let Err(e) = result {
+            assert!(e.to_string().contains("closed the connection"));
+        }
+
+        handle.await??;
         Ok(())
     }
 

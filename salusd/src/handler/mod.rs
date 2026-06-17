@@ -245,6 +245,18 @@ where
         Ok(())
     }
 
+    /// Answer a request the daemon could not decode with a clear error.
+    ///
+    /// Sent when the incoming bytes do not decode to a known `Action` (for
+    /// example, the client is newer than this daemon), so the client receives an
+    /// actionable message instead of an empty response.
+    pub(crate) async fn decode_error(&mut self) -> Result<()> {
+        self.response(Response::Error(
+            "salusd could not decode the request; the client may be newer than this daemon".into(),
+        ))
+        .await
+    }
+
     async fn response(&mut self, message: Response) -> Result<()> {
         let message = encode(message)?;
         self.sender.write_all(&message).await?;
@@ -366,6 +378,19 @@ mod test {
     async fn search_before_unlock_errors() -> Result<()> {
         let action = Action::Search(SearchQuery::builder().query("x").build());
         assert!(matches!(run(action).await?, Response::Error(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decode_error_responds_with_error() -> Result<()> {
+        // An undecodable request must produce a `Response::Error` the client can
+        // render, not an empty response that decodes to an opaque error.
+        let mut handler = handler(temp_store()?);
+        handler.decode_error().await?;
+        match decode::<Response>(&handler.sender)? {
+            Response::Error(msg) => assert!(msg.contains("could not decode")),
+            other => bail!("expected an error response, got {other:?}"),
+        }
         Ok(())
     }
 
