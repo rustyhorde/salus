@@ -6,7 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use std::io::{Write, stdin, stdout};
+use std::io::{IsTerminal as _, Write, stdin, stdout};
 
 use anyhow::{Context, Result, bail};
 use bon::Builder;
@@ -359,53 +359,134 @@ impl Inter {
         }
     }
 
-    pub(crate) async fn store(&self, key: String, value: String) -> Result<()> {
-        let message = Action::Store(Store::builder().key(key).value(value).build());
-        if let Response::Error(error) = self.send(message).await? {
-            eprintln!("Error occurred while storing value: {error}");
+    pub(crate) async fn store(&self, key: String, value: String, force: bool) -> Result<()> {
+        let message = Action::Store(
+            Store::builder()
+                .key(key.clone())
+                .value(value.clone())
+                .force(force)
+                .build(),
+        );
+        match self.send(message).await? {
+            Response::Success => {}
+            Response::KeyExists => {
+                // The key already exists. Confirm before overwriting; when stdin
+                // is not a terminal we cannot prompt, so a non-interactive
+                // overwrite must pass `--force` rather than be silently confirmed
+                // by piped input.
+                if !stdin().is_terminal() {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "Refusing to overwrite existing key '{key}' without confirmation; \
+                             re-run with --force to overwrite"
+                        )
+                        .red()
+                        .bold()
+                    );
+                    return Ok(());
+                }
+                let answer = prompt_line(&format!("Overwrite key '{key}'? [y/N]: "))?;
+                let answer = answer.trim().to_ascii_lowercase();
+                if answer != "y" && answer != "yes" {
+                    println!("{}", "Aborted; nothing was stored.".yellow());
+                    return Ok(());
+                }
+                let forced =
+                    Action::Store(Store::builder().key(key).value(value).force(true).build());
+                if let Response::Error(error) = self.send(forced).await? {
+                    eprintln!("Error occurred while storing value: {error}");
+                }
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while storing value: {error}");
+            }
+            _ => {
+                eprintln!("Unexpected response from salusd");
+            }
         }
         Ok(())
     }
 
-    pub(crate) async fn read(&self, key_opt: Option<String>) -> Result<()> {
-        // TODO: if key is not provided, prompt for it
-        if let Some(key) = key_opt {
-            let message = Action::Read(key.clone());
-            match self.send(message).await? {
-                Response::Value(value) => {
-                    if let Some(bytes) = value {
-                        match String::from_utf8(bytes) {
-                            Ok(val) => {
-                                let value_style = style(val).with(Color::Green).bold();
-                                println!("{}", "Value: ".green());
-                                println!("{value_style}");
-                            }
-                            Err(e) => {
-                                let len = e.as_bytes().len();
-                                let binary_style = style(format!(
-                                    "Value for '{key}' is {len} bytes of non-UTF-8 binary data"
-                                ))
-                                .with(Color::Yellow)
-                                .bold();
-                                println!("{binary_style}");
-                            }
+    pub(crate) async fn read(&self, key: String) -> Result<()> {
+        let message = Action::Read(key.clone());
+        match self.send(message).await? {
+            Response::Value(value) => {
+                if let Some(bytes) = value {
+                    match String::from_utf8(bytes) {
+                        Ok(val) => {
+                            let value_style = style(val).with(Color::Green).bold();
+                            println!("{}", "Value: ".green());
+                            println!("{value_style}");
                         }
-                    } else {
-                        let not_found_style =
-                            style(format!("No value found for '{key}'")).red().bold();
-                        println!("{not_found_style}");
+                        Err(e) => {
+                            let len = e.as_bytes().len();
+                            let binary_style = style(format!(
+                                "Value for '{key}' is {len} bytes of non-UTF-8 binary data"
+                            ))
+                            .with(Color::Yellow)
+                            .bold();
+                            println!("{binary_style}");
+                        }
                     }
-                }
-                Response::KeyNotFound => {
-                    let not_found_style = style(format!("Key '{key}' not found")).red().bold();
+                } else {
+                    let not_found_style = style(format!("No value found for '{key}'")).red().bold();
                     println!("{not_found_style}");
                 }
-                Response::Error(error) => {
-                    eprintln!("Error occurred while reading value: {error}");
-                }
-                _ => {
-                    eprintln!("Unexpected response from salusd");
-                }
+            }
+            Response::KeyNotFound => {
+                let not_found_style = style(format!("Key '{key}' not found")).red().bold();
+                println!("{not_found_style}");
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while reading value: {error}");
+            }
+            _ => {
+                eprintln!("Unexpected response from salusd");
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete(&self, key: String, force: bool) -> Result<()> {
+        // Confirm by default. A destructive delete should never proceed without
+        // an explicit yes: when stdin is not a terminal we cannot prompt, so a
+        // non-interactive delete must pass `--force` rather than be silently
+        // confirmed by piped input.
+        if !force {
+            if !stdin().is_terminal() {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "Refusing to delete '{key}' without confirmation; \
+                         re-run with --force for non-interactive deletes"
+                    )
+                    .red()
+                    .bold()
+                );
+                return Ok(());
+            }
+            let answer = prompt_line(&format!("Delete key '{key}'? [y/N]: "))?;
+            let answer = answer.trim().to_ascii_lowercase();
+            if answer != "y" && answer != "yes" {
+                println!("{}", "Aborted; nothing was deleted.".yellow());
+                return Ok(());
+            }
+        }
+
+        match self.send(Action::Delete(key.clone())).await? {
+            Response::Success => {
+                println!("{}", format!("Removed key '{key}'.").green().bold());
+            }
+            Response::KeyNotFound => {
+                let not_found_style = style(format!("Key '{key}' not found")).red().bold();
+                println!("{not_found_style}");
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while deleting value: {error}");
+            }
+            _ => {
+                eprintln!("Unexpected response from salusd");
             }
         }
         Ok(())

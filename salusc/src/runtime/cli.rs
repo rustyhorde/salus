@@ -6,11 +6,18 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use config::{ConfigError, Map, Source, Value, ValueKind};
 
+/// Command-line client for the salus secret store.
+///
+/// salusc talks to the `salusd` daemon over a local IPC socket. Initialize the
+/// store with `shares`, reconstruct the key with `unlock`, then `store`, `read`,
+/// `find`, and `delete` secrets. When the `salus-agent` is enrolled it can
+/// supply the unlock shares for you (see `enroll`). The client holds no key
+/// material and performs no cryptography itself.
 #[derive(Clone, Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about)]
 pub(crate) struct Cli {
     /// Set logging verbosity.  More v's, more verbose.
     #[clap(
@@ -100,18 +107,28 @@ impl Source for Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 pub(crate) enum Commands {
+    /// Initialize the store and print its key shares (first-time setup, once)
+    ///
+    /// Generates a fresh master key, splits it into Shamir shares, and prints
+    /// them a single time. Record them somewhere safe — they are required to
+    /// `unlock` the store and are never shown again.
     Shares {
         /// The number of shares to create
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "5", value_name = "COUNT")]
         num_shares: u8,
-        /// The number of shares required to reconstruct the secret
-        #[arg(short, long, default_value = "3")]
+        /// The number of shares required to reconstruct the key
+        #[arg(short, long, default_value = "3", value_name = "COUNT")]
         threshold: u8,
     },
+    /// Reconstruct the key in the daemon's memory from `threshold` shares
+    ///
+    /// Prompts for the required shares (or has the agent supply them when a set
+    /// is enrolled), then holds the key for the unlock duration before it
+    /// auto-clears.
     Unlock {
         /// The named enrollment set to unlock with (when the agent is enrolled).
         /// Omit to use the only set, or to be prompted when several exist.
-        #[arg(short, long)]
+        #[arg(short, long, value_name = "NAME")]
         set: Option<String>,
         /// How long the daemon should hold the key: a number of seconds (capped
         /// at 24h), or "forever". Omit to use the daemon's configured default.
@@ -120,25 +137,50 @@ pub(crate) enum Commands {
     },
     /// Clear the daemon's unlocked key and cancel any pending auto-clear timer
     Lock,
+    /// Encrypt and store a value under a key
+    ///
+    /// Provide the value as the second argument, or omit it to read the value
+    /// from stdin (e.g. `echo secret | salusc store mykey`). The store must be
+    /// unlocked first. If the key already exists, prompts for confirmation
+    /// before overwriting unless `--force` is given.
     Store {
         /// The key to store the value under
-        #[arg(short, long)]
+        #[arg(value_name = "KEY")]
         key: String,
-        /// The value to store; if omitted, reads from stdin
-        #[arg(short, long)]
+        /// The value to store; if omitted, it is read from stdin
+        #[arg(value_name = "VALUE")]
         value: Option<String>,
         /// Maximum bytes to read from stdin (default: 65536)
-        #[arg(long)]
+        #[arg(long, value_name = "BYTES")]
         max_value_bytes: Option<usize>,
+        /// Overwrite an existing value without prompting for confirmation
+        #[arg(short, long)]
+        force: bool,
     },
+    /// Read and decrypt the value stored under a key
+    ///
+    /// The store must be unlocked first.
     Read {
         /// The key to read the value from
-        #[arg(short, long)]
-        key_opt: Option<String>,
+        #[arg(value_name = "KEY")]
+        key: String,
     },
+    /// Permanently delete the value stored under a key
+    ///
+    /// Prompts for confirmation unless `--force` is given. The store must be
+    /// unlocked first.
+    Delete {
+        /// The key to delete from the store
+        #[arg(value_name = "KEY")]
+        key: String,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Search stored keys by regular expression
     Find {
-        /// The regex to find keys with
-        #[arg(index = 1)]
+        /// The regex to match key names against
+        #[arg(index = 1, value_name = "REGEX")]
         regex: String,
     },
     /// Enroll a named set of shares so the agent can supply them at unlock
@@ -165,6 +207,91 @@ pub(crate) enum Commands {
     },
     /// List the enrolled sets and whether the agent is reachable
     EnrollStatus,
+    /// Generate a random password or passphrase
+    ///
+    /// By default produces a 30-character password drawn from lowercase letters
+    /// plus (unless disabled) uppercase letters, digits, and symbols, with at
+    /// least one character from each enabled class. Use `--passphrase N` to
+    /// generate an N-word passphrase instead; `--passphrase` and `--kind`
+    /// cannot be combined with the character-class flags (`-l`/`-c`/`-n`/`-s`).
+    /// Pass `-k/--key` to also store the generated value under that key (the
+    /// store must be unlocked).
+    Gen {
+        /// Password length (8-1024)
+        #[arg(
+            short,
+            long,
+            default_value_t = 30,
+            value_parser = clap::value_parser!(u32).range(8..=1024),
+            value_name = "N"
+        )]
+        length: u32,
+        /// Include uppercase letters (pass `-c false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        caps: bool,
+        /// Include digits (pass `-n false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        numbers: bool,
+        /// Include symbols (pass `-s false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        special: bool,
+        /// Generate an N-word passphrase instead of a character password (1-20)
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u32).range(1..=20),
+            value_name = "N",
+            conflicts_with_all = ["length", "caps", "numbers", "special"]
+        )]
+        passphrase: Option<u32>,
+        /// Passphrase word formatting (only meaningful with --passphrase)
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = GenKind::Space,
+            conflicts_with_all = ["length", "caps", "numbers", "special"]
+        )]
+        kind: GenKind,
+        /// Also store the generated value under this key (store must be unlocked)
+        #[arg(short, long, value_name = "KEY")]
+        key: Option<String>,
+    },
+}
+
+/// How the words of a generated passphrase are joined together.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum GenKind {
+    /// Space-separated lowercase words: `correct horse battery staple`
+    Space,
+    /// Hyphen-separated lowercase words: `correct-horse-battery-staple`
+    Hyphen,
+    /// Dot-separated lowercase words: `correct.horse.battery.staple`
+    Dot,
+    /// Capitalized words with no separator: `CorrectHorseBatteryStaple`
+    Camel,
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ use crate::{
 };
 
 mod cli;
+mod generate;
 
 pub(crate) async fn run<I, T>(args: Option<I>) -> Result<()>
 where
@@ -52,6 +53,7 @@ where
             key,
             value,
             max_value_bytes,
+            force,
         } => {
             const DEFAULT_MAX: usize = 65_536; // 64 KiB
             let max_bytes = max_value_bytes
@@ -83,10 +85,11 @@ where
                 }
                 buf
             };
-            inter.store(key, value).await?;
+            inter.store(key, value, force).await?;
         }
 
-        Commands::Read { key_opt } => inter.read(key_opt).await?,
+        Commands::Read { key } => inter.read(key).await?,
+        Commands::Delete { key, force } => inter.delete(key, force).await?,
         Commands::Find { regex } => inter.find(regex).await?,
         Commands::Enroll {
             name,
@@ -95,6 +98,21 @@ where
         } => inter.enroll(name, force, independent_auto).await?,
         Commands::Forget { name, all } => forget(name.as_deref(), all)?,
         Commands::EnrollStatus => inter.enroll_status().await?,
+        Commands::Gen {
+            length,
+            caps,
+            numbers,
+            special,
+            passphrase,
+            kind,
+            key,
+        } => {
+            let secret = generate::generate(length, caps, numbers, special, passphrase, kind)?;
+            if let Some(key) = key {
+                inter.store(key, secret.clone(), false).await?;
+            }
+            generate::print_secret(&secret);
+        }
     }
 
     Ok(())

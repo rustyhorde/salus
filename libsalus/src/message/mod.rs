@@ -97,6 +97,9 @@ pub struct Store {
     key: String,
     #[builder(into)]
     value: String,
+    /// Overwrite an existing value without confirmation
+    #[builder(default)]
+    force: bool,
 }
 
 impl Store {
@@ -112,10 +115,16 @@ impl Store {
         &self.value
     }
 
-    /// Get the key and value as a tuple
+    /// Whether to overwrite an existing value without confirmation
     #[must_use]
-    pub fn into_parts(self) -> (String, String) {
-        (self.key, self.value)
+    pub fn force(&self) -> bool {
+        self.force
+    }
+
+    /// Get the key, value, and force flag as a tuple
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, bool) {
+        (self.key, self.value, self.force)
     }
 }
 
@@ -152,6 +161,8 @@ pub enum Action {
     Store(Store),
     /// Read an encrypted value
     Read(String),
+    /// Delete a stored value by key
+    Delete(String),
     /// Get the threshold
     GetThreshold,
     /// Find a key
@@ -177,6 +188,8 @@ pub enum Response {
     Value(Option<Vec<u8>>),
     /// The key was not found in the store
     KeyNotFound,
+    /// The key already exists and `force` was not set; overwrite was refused
+    KeyExists,
     /// The keys that matched the regex
     Matches(Vec<String>),
 }

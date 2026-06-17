@@ -532,9 +532,9 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.15.23"
+version = "0.15.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f316c6237b2d38be61949ecd15268a4c6ca32570079394a2444d9ce2c72a72d8"
+checksum = "0b34d0237145f33580b89724f75d16950efd3e2c91b2d823917ecb69ec7f84f0"
 dependencies = [
  "async-trait",
  "convert_case 0.6.0",
@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "libsalus"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -1924,7 +1924,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "salus-agent"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "salusc"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "bon",
@@ -1960,17 +1960,19 @@ dependencies = [
  "dirs2",
  "interprocess",
  "libsalus",
+ "rand 0.10.1",
  "rustversion",
  "salus-agent",
  "scanpw",
  "serde",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
 name = "salusd"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -2276,9 +2278,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.117"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2986,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",

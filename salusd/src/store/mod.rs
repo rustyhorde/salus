@@ -23,7 +23,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     db::{
         CHECK_KEY_KEY, INITIALIZED_KEY, NUM_SHARES_KEY, SALUS_CONFIG_TABLE_DEF,
-        SALUS_VAL_TABLE_DEF, THRESHOLD_KEY, read_value, unlock_redb,
+        SALUS_VAL_TABLE_DEF, THRESHOLD_KEY, delete_value, read_value, unlock_redb,
         values::{config::ConfigVal, salus::SalusVal},
         write_value,
     },
@@ -247,8 +247,24 @@ impl ShareStore {
         }
     }
 
-    pub(crate) fn store(&self, key: &str, mut value: Vec<u8>) -> Result<Response> {
+    pub(crate) fn store(&self, key: &str, mut value: Vec<u8>, force: bool) -> Result<Response> {
         if let Some(enc_key) = &self.key {
+            // Collision protection: unless the caller forces the write, refuse to
+            // overwrite an existing key. Checked before sealing so a refused
+            // overwrite does no needless encryption.
+            if !force {
+                let mut exists = false;
+                unlock_redb(&self.redb, |db| -> Result<()> {
+                    exists =
+                        read_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, key.to_string())?
+                            .is_some();
+                    Ok(())
+                })?;
+                if exists {
+                    info!("Refusing to overwrite existing key without force: {key}");
+                    return Ok(Response::KeyExists);
+                }
+            }
             let rnkey = RandomizedNonceKey::new(&AES_256_GCM, enc_key)
                 .with_context(|| Error::NonceKeyGen)?;
             let nonce = rnkey.seal_in_place_append_tag(Aad::from(key.as_bytes()), &mut value)?;
@@ -313,6 +329,35 @@ impl ShareStore {
             Ok(response)
         } else {
             Err(Error::StoreNotUnlocked.into())
+        }
+    }
+
+    pub(crate) fn delete(&self, key: &str) -> Result<Response> {
+        if self.key.is_none() {
+            return Err(Error::StoreNotUnlocked.into());
+        }
+        let mut removed = false;
+        unlock_redb(&self.redb, |db| -> Result<()> {
+            match delete_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, key.to_string()) {
+                Err(e) => {
+                    error!("Error deleting value from database: {e}");
+                    return Err(e);
+                }
+                Ok(existed) => {
+                    removed = existed;
+                    if existed {
+                        info!("Deleted value under key: {key}");
+                    } else {
+                        info!("Key not found for delete: {key}");
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        if removed {
+            Ok(Response::Success)
+        } else {
+            Ok(Response::KeyNotFound)
         }
     }
 
@@ -398,6 +443,72 @@ mod test {
     }
 
     #[test]
+    fn delete_removes_stored_value() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+        assert!(matches!(
+            store.store("alpha", b"top-secret".to_vec(), false)?,
+            Response::Success
+        ));
+
+        // Deleting a present key reports success and the value is gone.
+        assert!(matches!(store.delete("alpha")?, Response::Success));
+        assert!(matches!(store.read("alpha")?, Response::Value(None)));
+
+        // Deleting again is idempotent: nothing to remove.
+        assert!(matches!(store.delete("alpha")?, Response::KeyNotFound));
+        Ok(())
+    }
+
+    #[test]
+    fn store_refuses_overwrite_without_force() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+
+        // First write under a fresh key succeeds.
+        assert!(matches!(
+            store.store("alpha", b"first".to_vec(), false)?,
+            Response::Success
+        ));
+
+        // A second write without force is refused and leaves the old value intact.
+        assert!(matches!(
+            store.store("alpha", b"second".to_vec(), false)?,
+            Response::KeyExists
+        ));
+        match store.read("alpha")? {
+            Response::Value(Some(value)) => assert_eq!(value, b"first"),
+            other => bail!("expected the original value, got {other:?}"),
+        }
+
+        // With force the value is overwritten.
+        assert!(matches!(
+            store.store("alpha", b"second".to_vec(), true)?,
+            Response::Success
+        ));
+        match store.read("alpha")? {
+            Response::Value(Some(value)) => assert_eq!(value, b"second"),
+            other => bail!("expected the overwritten value, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn delete_before_unlock_errors() -> Result<()> {
+        let store = temp_store()?;
+        assert!(store.delete("alpha").is_err());
+        Ok(())
+    }
+
+    #[test]
     fn relocated_ciphertext_fails_to_decrypt() -> Result<()> {
         let mut store = temp_store()?;
         let shares = gen_and_collect(&mut store)?;
@@ -406,7 +517,7 @@ mod test {
         }
         assert!(matches!(store.unlock()?, Response::Success));
         assert!(matches!(
-            store.store("alpha", b"top-secret".to_vec())?,
+            store.store("alpha", b"top-secret".to_vec(), false)?,
             Response::Success
         ));
 

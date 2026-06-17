@@ -37,6 +37,8 @@ cargo run -p xtask -- dist salusc   # completions/man page -> dist/salusc
 
 The daemon must be unlocked before `store`/`read` succeed (otherwise `StoreNotUnlocked`).
 
+**Dev daemon vs. installed service share the same defaults.** A dev `cargo run -p salusd` and the packaged `salusd.service` both default to the *same* per-user database (`~/.local/share/salusd/salusd.redb`) and IPC socket, because the paths derive from the `salusd` crate name. They cannot run at once — redb takes an exclusive file lock and the second daemon exits with `Error::DatabaseLocked` ("Another salusd may already be running…"). When developing alongside an installed service, either `systemctl --user stop salusd` first, or point the dev daemon at a separate DB and socket: `cargo run -p salusd -- -e -v -d /tmp/salus-dev.redb -s /tmp/salus-dev.sock`.
+
 ## Architecture details worth knowing
 
 **Wire protocol.** Client and daemon exchange `libsalus::Action` / `Response` enums serialized with `bincode-next` (`standard()` config). Each request is a fresh socket connection: the client writes one encoded `Action`, half-closes the send side, and reads the `Response` to EOF (`read_to_end`). Adding an operation means: add an `Action` (and usually a `Response`) variant in `libsalus/src/message/mod.rs`, a client method in `salusc/src/inter/mod.rs`, a CLI subcommand in `salusc/src/runtime/cli.rs`, and a handler arm in `salusd`'s `ActionHandler::action_handler` that calls into `ShareStore`.

@@ -19,6 +19,11 @@ A key/value store protected by secret shares and encryption
 [![Crates.io](https://img.shields.io/crates/l/salusc.svg)](https://crates.io/crates/salusc)
 [![Crates.io](https://img.shields.io/crates/d/salusc.svg)](https://crates.io/crates/salusc)
 
+### salus-agent
+[![Crates.io](https://img.shields.io/crates/v/salus-agent.svg)](https://crates.io/crates/salus-agent)
+[![Crates.io](https://img.shields.io/crates/l/salus-agent.svg)](https://crates.io/crates/salus-agent)
+[![Crates.io](https://img.shields.io/crates/d/salus-agent.svg)](https://crates.io/crates/salus-agent)
+
 ### CI/CD
 [![docs.rs](https://docs.rs/libsalus/badge.svg)](https://docs.rs/libsalus)
 [![codecov](https://codecov.io/gh/rustyhorde/salus/branch/master/graph/badge.svg)](https://codecov.io/gh/rustyhorde/salus)
@@ -33,7 +38,11 @@ A long-running daemon (`salusd`) owns the encrypted database and holds the
 reconstructed key only in memory. A command line client (`salusc`) talks to it
 over a local IPC socket; the client holds no key material and performs no crypto.
 
-The project is three workspace crates:
+An optional per-user login agent (`salus-agent`) can hold enrolled shares in the
+OS keyring and supply them to `unlock`, so a routine unlock needs only a single
+passphrase instead of re-entering every share by hand.
+
+The project is four workspace crates:
 
 - **`libsalus`** — shared library: Shamir share generation/unlocking (wraps the
   [`ssss`][ssss] crate), the wire protocol (`Action`/`Response` enums and message
@@ -43,6 +52,9 @@ The project is three workspace crates:
   crypto-at-rest and storage.
 - **`salusc`** — the CLI client: parses subcommands, connects to the socket, sends
   `Action`s, and renders `Response`s with [`crossterm`][crossterm] styling.
+- **`salus-agent`** — the optional login agent: loads enrolled share sets from the
+  OS keyring, holds them in memory, and serves them to `salusc unlock` over its
+  own IPC socket so unlocking needs only a passphrase.
 
 Built with **edition 2024**, MSRV **1.91.1**, and dual-licensed
 **MIT OR Apache-2.0**.
@@ -50,7 +62,7 @@ Built with **edition 2024**, MSRV **1.91.1**, and dual-licensed
 ## Build
 
 ```bash
-cargo build                  # build all three crates
+cargo build                  # build all crates
 cargo build --release
 cargo test                   # run all tests
 cargo test -p libsalus       # test a single crate
@@ -79,9 +91,13 @@ cargo clippy --all-targets   # lints (see note below)
    ```bash
    salusc shares                      # first-time init; prints the shares ONCE — record them
    salusc unlock                      # prompts for `threshold` shares; reconstructs the key in memory
-   salusc store -k mykey -v myvalue
-   salusc read -k mykey
+   salusc store mykey myvalue         # KEY then VALUE (omit VALUE to read from stdin)
+   salusc read mykey
    salusc find '^my'
+   salusc delete mykey                # prompts for confirmation (--force to skip)
+   salusc gen                         # print a random 30-char password
+   salusc gen --passphrase 5          # print a 5-word passphrase
+   salusc gen -k mykey                # generate and store under mykey (must be unlocked)
    ```
 
 The daemon must be unlocked before `store`/`read` succeed (otherwise
@@ -117,9 +133,10 @@ source scripts/dev_env.fish      # defines salusd-dev / salusc-dev
 salusd-dev                       # terminal 1: foreground debug daemon
 salusc-dev shares                # terminal 2: first-time init — record the shares
 salusc-dev unlock                # enter `threshold` shares (default 3)
-salusc-dev store -k mykey -v myvalue
-salusc-dev read  -k mykey
+salusc-dev store mykey myvalue
+salusc-dev read  mykey
 salusc-dev find '^my'
+salusc-dev delete mykey
 ```
 
 The wrappers are thin — the equivalent raw commands (for non-fish shells, run
@@ -193,25 +210,69 @@ salusc [OPTIONS] <COMMAND>
 ```
 
 Global options: `-v, --verbose`, `-q, --quiet`, `-c, --config-path <PATH>`,
-`-s, --socket-path <PATH>`. Like the daemon, the client reads a TOML config file
-(`<config dir>/salusc/salusc.toml` by default) and `SALUSC_` environment
-variables in addition to CLI flags; it uses `SALUS_SOCKET` / `--socket-path` to
-find the daemon's socket.
+`-s, --socket-path <PATH>`, `-a, --agent-socket-path <PATH>`. Like the daemon,
+the client reads a TOML config file (`<config dir>/salusc/salusc.toml` by
+default) and `SALUSC_` environment variables in addition to CLI flags; it uses
+`SALUS_SOCKET` / `--socket-path` to find the daemon's socket and
+`SALUS_AGENT_SOCKET` / `--agent-socket-path` to find the optional
+`salus-agent`'s socket.
 
 | Command | Description |
 | --- | --- |
 | `shares` | First-time init. Generates and prints the shares **once** — record them. |
-| `unlock` | Prompts for `threshold` shares and reconstructs the key in the daemon's memory. |
+| `unlock` | Prompts for `threshold` shares (or has the agent supply them) and reconstructs the key in the daemon's memory. |
+| `lock` | Clear the unlocked key immediately and cancel any pending auto-clear timer. |
 | `store` | Store an encrypted value under a key. |
 | `read` | Read and decrypt the value for a key. |
+| `delete` | Permanently delete the value stored under a key (prompts for confirmation). |
 | `find` | Search keys by regular expression. |
+| `enroll` | Enroll a named set of shares in the OS keyring so the agent can supply them at unlock. |
+| `forget` | Remove a named enrolled set, or every set with `--all`. |
+| `enroll-status` | List the enrolled sets and whether the agent is reachable. |
 
 Command options:
 
 - `shares` — `-n, --num-shares <N>` (default `5`), `-t, --threshold <N>` (default `3`).
-- `store` — `-k, --key <KEY>`, `-v, --value <VALUE>`.
-- `read` — `-k, --key-opt <KEY>`.
+- `store` — `<KEY>` (positional), `<VALUE>` (positional, optional — read from
+  stdin when omitted, e.g. `echo secret | salusc store mykey`),
+  `--max-value-bytes <BYTES>` (stdin cap, default `65536`).
+- `read` — `<KEY>` (positional).
+- `delete` — `<KEY>` (positional), `-f, --force` (skip the confirmation prompt).
 - `find` — `<REGEX>` (positional).
+- `enroll` — `-n, --name <NAME>` (default `default`), `--force`, `--independent-auto`.
+- `forget` — `-n, --name <NAME>`, `--all`.
+- `gen` — generate a password or passphrase locally (no daemon needed unless
+  storing). `-l, --length <N>` (default `30`, range `8`–`1024`), `-c, --caps`,
+  `-n, --numbers`, `-s, --special` (each default `true`; disable with e.g.
+  `-c false`). `--passphrase <N>` makes an `N`-word passphrase (range `1`–`20`)
+  with `--kind <space|hyphen|dot|camel>` formatting (default `space`);
+  `--passphrase`/`--kind` cannot be combined with the character-class flags.
+  `-k, --key <KEY>` also stores the result under `KEY` (store must be unlocked).
+
+### Enrolling with the agent
+
+Entering `threshold` shares by hand on every unlock is tedious. The optional
+`salus-agent` removes that friction: at enrollment time it stores `threshold − 1`
+of your shares directly in the OS keyring (the **automatic** shares) and seals
+the final share behind a passphrase (argon2id-derived AES-256-GCM). Afterward,
+`salusc unlock` asks the running agent for the automatic shares and prompts only
+for the one passphrase to unseal the last share — so an unlock needs a single
+secret instead of three.
+
+```bash
+salus-agent &              # or run it as a systemd user service (see Installation)
+salusc enroll              # prompts for the threshold shares once, then a passphrase
+salusc enroll-status       # show enrolled sets and whether the agent is reachable
+salusc unlock              # now only prompts for the passphrase
+salusc forget --all        # remove enrolled sets from the keyring
+```
+
+By default every enrolled set reuses the same automatic shares, so the keyring
+never holds `threshold` or more shares for a single set at once. `enroll
+--name <NAME>` keeps multiple independent sets; `--independent-auto` stores a
+set's automatic shares separately (accepting the documented keyring-union risk).
+If the agent is not running, or a set is not enrolled, `unlock` transparently
+falls back to manual share entry.
 
 ## Architecture
 
@@ -269,10 +330,11 @@ generic `read_value` / `write_value` helpers.
 
 ## Installation
 
-Each release publishes the `salusd` daemon and the `salusc` client through
-several channels. Every packaged install also ships shell completions, man
-pages, an example config, and a systemd **user** unit for the daemon. Pick the
-section for your platform.
+Each release publishes the `salusd` daemon, the `salusc` client, and the
+optional `salus-agent` login agent through several channels. Every packaged
+install also ships shell completions, man pages, example configs, and systemd
+**user** units for both the daemon and the agent. Pick the section for your
+platform.
 
 ### Installation (Arch Linux / AUR)
 
@@ -404,12 +466,13 @@ sudo dnf remove salus
 
 ### Installation (cargo)
 
-Requires a Rust toolchain. Install the two binaries directly from
+Requires a Rust toolchain. Install the binaries directly from
 [crates.io](https://crates.io):
 
 ```bash
 cargo install salusd        # the daemon
 cargo install salusc        # the client
+cargo install salus-agent   # the optional login agent
 ```
 
 Append `--version <x.y.z>` to install a specific release. A `cargo install` does
@@ -432,6 +495,13 @@ per-user — so it runs as a systemd *user* service, not a system service. The
 
 ```bash
 systemctl --user enable --now salusd
+```
+
+To use the optional login agent, enable its user unit as well — it loads your
+enrolled share sets from the keyring so `salusc unlock` only needs a passphrase:
+
+```bash
+systemctl --user enable --now salus-agent
 ```
 
 The daemon holds the reconstructed key only in memory and clears it after
@@ -457,28 +527,6 @@ salusc unlock   # reconstruct the key in the daemon's memory
 > not `/usr/bin/salusd`. Copy the unit from a packaged install (or write your
 > own) and set `ExecStart=%h/.cargo/bin/salusd` before enabling it.
 
-## Releasing
-
-Releases are driven by a git tag push and handled by
-`.github/workflows/release.yml`:
-
-1. Bump the version in `libsalus/`, `salusd/`, and `salusc/` `Cargo.toml`
-   (and the `libsalus` dependency version in `salusd`/`salusc`), then commit.
-2. Tag and push: `git tag vX.Y.Z && git push --tags`. A `vX.Y.Z-rc*` tag only
-   exercises the build jobs (publishing is skipped) for a dry run.
-3. On a full `vX.Y.Z` tag the workflow builds static MUSL + macOS binaries,
-   creates the GitHub release, publishes the crates to crates.io (in dependency
-   order: `libsalus` → `salusd` → `salusc`), updates the AUR PKGBUILDs,
-   publishes the signed apt/rpm repository, and updates the Homebrew tap.
-
-`cargo xtask dist salusd|salusc` regenerates the shell completions, man pages,
-licenses, and (for `salusd`) the systemd unit and example config under `dist/`.
-
-The workflow requires these repository secrets: `CRATES_IO_TOKEN` (crates.io),
-`AUR_SSH_PRIVATE_KEY` (AUR), `HOMEBREW_TAP_TOKEN` (Homebrew tap),
-`PACKAGES_REPO_TOKEN` + `PACKAGES_GPG_PRIVATE_KEY` + `PACKAGES_GPG_KEY_ID`
-(signed apt/rpm repo).
-
 ## License
 
 Licensed under either of
@@ -489,6 +537,11 @@ Licensed under either of
   <https://opensource.org/licenses/MIT>)
 
 at your option.
+
+The bundled passphrase word list (`salusc/src/runtime/eff_large_wordlist.txt`)
+is the EFF "large" word list, © Electronic Frontier Foundation, distributed
+under the [Creative Commons Attribution 3.0 United States][cc-by-3] license. See
+<https://www.eff.org/dice>.
 
 ### Contribution
 
@@ -501,3 +554,4 @@ dual licensed as above, without any additional terms or conditions.
 [redb]: https://crates.io/crates/redb
 [crossterm]: https://crates.io/crates/crossterm
 [bincode]: https://crates.io/crates/bincode-next
+[cc-by-3]: https://creativecommons.org/licenses/by/3.0/us/
