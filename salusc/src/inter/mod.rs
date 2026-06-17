@@ -823,9 +823,92 @@ fn parse_set_choice(line: &str, len: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use libsalus::{MAX_UNLOCK_SECONDS, UnlockTimeout};
+    use std::{
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
-    use super::{parse_set_choice, parse_unlock_timeout};
+    use anyhow::Result;
+    use interprocess::local_socket::{
+        GenericFilePath, ListenerOptions, ToFsName,
+        traits::tokio::{Listener, Stream as _},
+    };
+    use libsalus::{
+        Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SetInfo, Shares,
+        UnlockTimeout, decode, encode,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        task::JoinHandle,
+    };
+
+    use super::{Inter, parse_set_choice, parse_unlock_timeout, render_prompt};
+
+    /// Allocate a unique filesystem socket path so parallel tests never collide.
+    fn unique_socket_path(tag: &str) -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("salus-test-{}-{tag}-{n}.sock", std::process::id()))
+    }
+
+    /// Build an `Inter` pointed at the given daemon socket path. The agent socket
+    /// is pointed at a path with no listener so agent probes fail fast.
+    fn inter_for(path: &Path) -> Inter {
+        Inter::builder()
+            .name(path.to_string_lossy().into_owned())
+            .agent_name(unique_socket_path("noagent").to_string_lossy().into_owned())
+            .build()
+    }
+
+    /// Stand up a mock daemon that accepts one connection per queued response,
+    /// reads the incoming `Action`, and writes back the canned `Response`. The
+    /// returned handle yields the `Action`s the client actually sent.
+    fn spawn_daemon_mock(
+        path: &Path,
+        responses: Vec<Response>,
+    ) -> Result<JoinHandle<Result<Vec<Action>>>> {
+        let name = path.to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        Ok(tokio::spawn(async move {
+            let mut received = Vec::new();
+            for response in responses {
+                let conn = listener.accept().await?;
+                let (mut recver, mut sender) = conn.split();
+                let mut buf = Vec::new();
+                let _n = recver.read_to_end(&mut buf).await?;
+                received.push(decode::<Action>(&buf)?);
+                let bytes = encode(response)?;
+                sender.write_all(&bytes).await?;
+                sender.flush().await?;
+                drop(sender);
+            }
+            Ok(received)
+        }))
+    }
+
+    /// Like [`spawn_daemon_mock`] but speaks the `salus-agent` protocol.
+    fn spawn_agent_mock(
+        path: &Path,
+        responses: Vec<AgentResponse>,
+    ) -> Result<JoinHandle<Result<Vec<AgentAction>>>> {
+        let name = path.to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        Ok(tokio::spawn(async move {
+            let mut received = Vec::new();
+            for response in responses {
+                let conn = listener.accept().await?;
+                let (mut recver, mut sender) = conn.split();
+                let mut buf = Vec::new();
+                let _n = recver.read_to_end(&mut buf).await?;
+                received.push(decode::<AgentAction>(&buf)?);
+                let bytes = encode(response)?;
+                sender.write_all(&bytes).await?;
+                sender.flush().await?;
+                drop(sender);
+            }
+            Ok(received)
+        }))
+    }
 
     #[test]
     fn set_choice_valid_is_zero_based() {
@@ -871,5 +954,249 @@ mod test {
     #[test]
     fn garbage_falls_back_to_default() {
         assert_eq!(parse_unlock_timeout(Some("abc")), UnlockTimeout::Default);
+    }
+
+    #[tokio::test]
+    async fn send_round_trips_action_and_response() -> Result<()> {
+        let path = unique_socket_path("send");
+        let handle = spawn_daemon_mock(&path, vec![Response::Success])?;
+        let inter = inter_for(&path);
+
+        assert!(matches!(inter.send(Action::Lock).await?, Response::Success));
+
+        let received = handle.await??;
+        assert!(matches!(received.as_slice(), [Action::Lock]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shares_handles_every_response_arm() -> Result<()> {
+        for response in [
+            Response::Shares(Shares::builder().shares(vec!["s1".to_string()]).build()),
+            Response::AlreadyInitialiazed,
+            Response::Error("boom".to_string()),
+            Response::Success, // unexpected arm
+        ] {
+            let path = unique_socket_path("shares");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).shares(5, 3).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lock_handles_success_and_error() -> Result<()> {
+        for response in [Response::Success, Response::Error("nope".to_string())] {
+            let path = unique_socket_path("lock");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).lock().await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn find_handles_matches_and_error() -> Result<()> {
+        for response in [
+            Response::Matches(vec!["aws-prod".to_string()]),
+            Response::Matches(vec![]),
+            Response::Error("bad regex".to_string()),
+        ] {
+            let path = unique_socket_path("find");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).find("aws.*".to_string()).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_handles_every_response_arm() -> Result<()> {
+        for response in [
+            Response::Value(Some(b"plain".to_vec())),
+            Response::Value(Some(vec![0xff, 0xfe, 0x00])), // non-UTF-8
+            Response::Value(None),
+            Response::KeyNotFound,
+            Response::Error("read failed".to_string()),
+        ] {
+            let path = unique_socket_path("read");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).read("k".to_string()).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_success_and_error() -> Result<()> {
+        for response in [Response::Success, Response::Error("disk full".to_string())] {
+            let path = unique_socket_path("store");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path)
+                .store("k".to_string(), "v".to_string(), false)
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_key_exists_refuses_without_terminal() -> Result<()> {
+        // Under `cargo test` stdin is not a terminal, so a `KeyExists` response
+        // takes the non-interactive "refuse to overwrite" branch and makes no
+        // second request.
+        let path = unique_socket_path("store-exists");
+        let handle = spawn_daemon_mock(&path, vec![Response::KeyExists])?;
+        inter_for(&path)
+            .store("k".to_string(), "v".to_string(), false)
+            .await?;
+        let received = handle.await??;
+        assert_eq!(received.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_with_force_handles_arms() -> Result<()> {
+        for response in [
+            Response::Success,
+            Response::KeyNotFound,
+            Response::Error("locked".to_string()),
+        ] {
+            let path = unique_socket_path("delete");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).delete("k".to_string(), true).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_without_force_refuses_without_terminal() -> Result<()> {
+        // Non-terminal stdin + no `--force` means the delete is refused before any
+        // request is sent, so no mock daemon is needed.
+        let path = unique_socket_path("delete-refuse");
+        inter_for(&path).delete("k".to_string(), false).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_search_surfaces_matches_and_errors() -> Result<()> {
+        let path = unique_socket_path("search-ok");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Matches(vec!["aws".to_string()])])?;
+        let matches = inter_for(&path).send_search("aws", None).await?;
+        assert_eq!(matches, vec!["aws".to_string()]);
+
+        let path = unique_socket_path("search-err");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Error("locked".to_string())])?;
+        assert!(inter_for(&path).send_search("aws", None).await.is_err());
+
+        let path = unique_socket_path("search-unexpected");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Success])?;
+        assert!(inter_for(&path).send_search("aws", None).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_once_prints_matches_and_empty() -> Result<()> {
+        let path = unique_socket_path("search-once");
+        let _handle =
+            spawn_daemon_mock(&path, vec![Response::Matches(vec!["github".to_string()])])?;
+        inter_for(&path)
+            .search(Some("git".to_string()), Some(10))
+            .await?;
+
+        let path = unique_socket_path("search-once-empty");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Matches(vec![])])?;
+        inter_for(&path)
+            .search(Some("zzz".to_string()), None)
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_send_round_trips() -> Result<()> {
+        let path = unique_socket_path("agent");
+        let handle = spawn_agent_mock(&path, vec![AgentResponse::Status { sets: vec![] }])?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(path.to_string_lossy().into_owned())
+            .build();
+
+        assert!(matches!(
+            inter.agent_send(AgentAction::Status).await?,
+            AgentResponse::Status { .. }
+        ));
+        let received = handle.await??;
+        assert!(matches!(received.as_slice(), [AgentAction::Status]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_when_agent_unreachable() -> Result<()> {
+        // `inter_for` points the agent at a socket with no listener.
+        let path = unique_socket_path("collect-unreachable");
+        let result = inter_for(&path).collect_shares_via_agent(None).await?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_when_no_sets() -> Result<()> {
+        let agent = unique_socket_path("collect-empty-agent");
+        let _handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(agent.to_string_lossy().into_owned())
+            .build();
+        assert!(inter.collect_shares_via_agent(None).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_on_unknown_set() -> Result<()> {
+        let agent = unique_socket_path("collect-unknown-agent");
+        let _handle = spawn_agent_mock(
+            &agent,
+            vec![
+                AgentResponse::Status {
+                    sets: vec![SetInfo {
+                        name: "prod".to_string(),
+                        auto_count: 2,
+                    }],
+                },
+                AgentResponse::UnknownSet,
+            ],
+        )?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(agent.to_string_lossy().into_owned())
+            .build();
+        // An explicit (missing) set name avoids the interactive set chooser.
+        assert!(
+            inter
+                .collect_shares_via_agent(Some("missing".to_string()))
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn render_prompt_handles_populated_and_empty_lists() -> Result<()> {
+        let matches = vec![
+            "aws-prod".to_string(),
+            "aws-staging".to_string(),
+            "github".to_string(),
+        ];
+        render_prompt(&matches, 1, "aws")?;
+        render_prompt(&[], 0, "zzz")?;
+        Ok(())
     }
 }

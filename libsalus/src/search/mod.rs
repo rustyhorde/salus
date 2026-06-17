@@ -98,6 +98,17 @@ mod test {
     }
 
     #[test]
+    fn empty_query_with_limit_truncates_sorted() {
+        // The "list all" branch must honor the limit too, returning the first
+        // `n` candidates in sorted order.
+        let ranked = fuzzy_rank("", keys(), Some(2));
+        assert_eq!(
+            ranked,
+            vec!["aws-prod-key".to_string(), "aws-staging".to_string()]
+        );
+    }
+
+    #[test]
     fn no_match_returns_empty() {
         let ranked = fuzzy_rank("zzzznope", keys(), None);
         assert!(ranked.is_empty());

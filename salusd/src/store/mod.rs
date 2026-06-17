@@ -587,6 +587,41 @@ mod test {
     }
 
     #[test]
+    fn find_returns_regex_matches() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+        for key in ["aws-prod-key", "aws-staging", "github-token"] {
+            assert!(matches!(
+                store.store(key, b"v".to_vec(), false)?,
+                Response::Success
+            ));
+        }
+
+        // A regex returns only the matching keys, and never the internal
+        // CHECK_KEY sentinel.
+        match store.find("aws.*")? {
+            Response::Matches(matches) => {
+                assert!(matches.iter().any(|k| k == "aws-prod-key"));
+                assert!(matches.iter().any(|k| k == "aws-staging"));
+                assert!(!matches.iter().any(|k| k == "github-token"));
+                assert!(!matches.iter().any(|k| k == "CHECK_KEY"));
+            }
+            other => bail!("expected matches, got {other:?}"),
+        }
+
+        // A non-matching regex returns an empty match set.
+        match store.find("zzz-no-such-key")? {
+            Response::Matches(matches) => assert!(matches.is_empty()),
+            other => bail!("expected empty matches, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn relocated_ciphertext_fails_to_decrypt() -> Result<()> {
         let mut store = temp_store()?;
         let shares = gen_and_collect(&mut store)?;

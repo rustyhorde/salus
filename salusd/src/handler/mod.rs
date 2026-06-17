@@ -273,7 +273,7 @@ mod test {
     use std::sync::{Arc, Mutex};
 
     use anyhow::{Result, bail};
-    use libsalus::{Action, Response, Store, decode};
+    use libsalus::{Action, Response, SearchQuery, Share, Store, UnlockTimeout, decode};
     use redb::Database;
 
     use super::ActionHandler;
@@ -296,6 +296,16 @@ mod test {
 
     async fn run(action: Action) -> Result<Response> {
         let mut handler = handler(temp_store()?);
+        handler.action_handler(action).await?;
+        decode::<Response>(&handler.sender)
+    }
+
+    /// Run one action on a persistent handler, returning the decoded response.
+    ///
+    /// Unlike [`run`], the handler (and its store) survives across calls so a
+    /// test can drive a full gen/unlock/store/search sequence.
+    async fn run_on(handler: &mut ActionHandler<Vec<u8>>, action: Action) -> Result<Response> {
+        handler.sender.clear();
         handler.action_handler(action).await?;
         decode::<Response>(&handler.sender)
     }
@@ -349,6 +359,58 @@ mod test {
     #[tokio::test]
     async fn lock_responds_success() -> Result<()> {
         assert!(matches!(run(Action::Lock).await?, Response::Success));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_before_unlock_errors() -> Result<()> {
+        let action = Action::Search(SearchQuery::builder().query("x").build());
+        assert!(matches!(run(action).await?, Response::Error(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unlock_then_store_and_search_succeeds() -> Result<()> {
+        // A non-zero key timeout exercises the unlock arm that arms the
+        // auto-clear timer; the timer never fires within the test.
+        let mut handler = ActionHandler::builder()
+            .sender(Vec::<u8>::new())
+            .store(temp_store()?)
+            .key_timeout(3600u64)
+            .build();
+
+        let shares = match run_on(&mut handler, Action::GenShares(5, 3)).await? {
+            Response::Shares(shares) => shares.shares().to_vec(),
+            other => bail!("expected shares, got {other:?}"),
+        };
+        for share in shares.iter().take(3) {
+            let action = Action::Share(Share::builder().share(share.clone()).build());
+            assert!(matches!(
+                run_on(&mut handler, action).await?,
+                Response::Success
+            ));
+        }
+
+        assert!(matches!(
+            run_on(&mut handler, Action::Unlock(UnlockTimeout::Default)).await?,
+            Response::Success
+        ));
+
+        let store = Store::builder().key("aws-prod-key").value("v").build();
+        assert!(matches!(
+            run_on(&mut handler, Action::Store(store)).await?,
+            Response::Success
+        ));
+
+        match run_on(
+            &mut handler,
+            Action::Search(SearchQuery::builder().query("aws").build()),
+        )
+        .await?
+        {
+            Response::Matches(matches) => assert!(matches.iter().any(|k| k == "aws-prod-key")),
+            other => bail!("expected matches, got {other:?}"),
+        }
         Ok(())
     }
 }
