@@ -48,5 +48,8 @@ tracing-subscriber = { workspace = true }
 tracing-subscriber-init = { workspace = true }
 zeroize = { workspace = true }
 
+[dev-dependencies]
+keyring-core = { workspace = true }
+
 [build-dependencies]
 rustversion = { workspace = true }

@@ -8,109 +8,44 @@
 
 //! A process-local, in-memory keyring backend for tests.
 //!
-//! The stock `keyring::mock` builds a fresh, non-persistent credential for every
-//! `Entry::new`, but `keystore` opens a new `Entry` per operation, so the mock
-//! cannot round-trip a write through a later read. This backend keys credentials
-//! by `(service, account)` in a single shared map, so repeated `Entry::new` calls
-//! for the same account see the same data — just like a real keyring.
+//! Production code reaches the keyring through `keyring`'s `v1` API
+//! ([`keyring::Entry`]). The first `Entry::new` in a process installs the
+//! platform-native store (Secret Service / Keychain) as `keyring_core`'s
+//! default via a private `Once`. Left to its own devices that would route the
+//! tests at the *real* OS keyring — mutating (and reading stale state from) the
+//! developer's actual credentials.
 //!
-//! [`guard`] installs the backend once, clears it, and returns a held lock that
-//! serializes keyring-touching tests so they cannot collide on the shared map
-//! even when the test binary runs them on multiple threads.
+//! [`guard`] defuses that: it fires the `Once` once with a throwaway entry, then
+//! installs a fresh `keyring-core` [`mock::Store`] as the default. The mock keys
+//! credentials by `(service, account)` in a per-instance map, so the new
+//! `Entry` that `keystore` opens for each operation still round-trips a write
+//! through a later read. Installing a brand-new mock per call clears any state a
+//! prior test left behind, and the returned guard serializes keyring-touching
+//! tests so they cannot collide on the process-global default store.
 
-use std::{
-    any::Any,
-    collections::HashMap,
-    sync::{Mutex, MutexGuard, OnceLock},
-};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use keyring::{
-    Error as KeyringError, Result as KeyringResult,
-    credential::{Credential, CredentialApi, CredentialBuilderApi, CredentialPersistence},
-    set_default_credential_builder,
-};
-
-type Store = Mutex<HashMap<(String, String), Vec<u8>>>;
-
-fn store() -> &'static Store {
-    static STORE: OnceLock<Store> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+use keyring_core::{mock, set_default_store};
 
 fn serial() -> &'static Mutex<()> {
     static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
     SERIAL.get_or_init(|| Mutex::new(()))
 }
 
-fn lock_store() -> MutexGuard<'static, HashMap<(String, String), Vec<u8>>> {
-    store()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-#[derive(Debug)]
-struct MemCredential {
-    key: (String, String),
-}
-
-impl CredentialApi for MemCredential {
-    fn set_secret(&self, secret: &[u8]) -> KeyringResult<()> {
-        let _old = lock_store().insert(self.key.clone(), secret.to_vec());
-        Ok(())
-    }
-
-    fn get_secret(&self) -> KeyringResult<Vec<u8>> {
-        lock_store()
-            .get(&self.key)
-            .cloned()
-            .ok_or(KeyringError::NoEntry)
-    }
-
-    fn delete_credential(&self) -> KeyringResult<()> {
-        if lock_store().remove(&self.key).is_some() {
-            Ok(())
-        } else {
-            Err(KeyringError::NoEntry)
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Debug)]
-struct MemBuilder;
-
-impl CredentialBuilderApi for MemBuilder {
-    fn build(
-        &self,
-        _target: Option<&str>,
-        service: &str,
-        user: &str,
-    ) -> KeyringResult<Box<Credential>> {
-        Ok(Box::new(MemCredential {
-            key: (service.to_string(), user.to_string()),
-        }))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn persistence(&self) -> CredentialPersistence {
-        CredentialPersistence::ProcessOnly
-    }
-}
-
-/// Install the in-memory keyring (once), clear its contents, and serialize
-/// keyring-touching tests for the lifetime of the returned guard.
+/// Install a fresh in-memory keyring (clearing any prior contents) and
+/// serialize keyring-touching tests for the lifetime of the returned guard.
 pub(crate) fn guard() -> MutexGuard<'static, ()> {
-    static INIT: OnceLock<()> = OnceLock::new();
     let lock = serial()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _init = INIT.get_or_init(|| set_default_credential_builder(Box::new(MemBuilder)));
-    lock_store().clear();
+    // Fire the v1 `Once` now (it installs the native store, or nothing if the
+    // platform store is unavailable) so it cannot clobber our mock later. The
+    // throwaway entry is never read or written.
+    let _native = keyring::Entry::new("salus", "__test_store_init__");
+    // `mock::Store::new` is infallible in practice; if it ever failed we'd
+    // simply leave the previous default store in place rather than panic.
+    if let Ok(store) = mock::Store::new() {
+        set_default_store(store);
+    }
     lock
 }
