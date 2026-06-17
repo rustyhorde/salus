@@ -141,7 +141,8 @@ pub(crate) enum Commands {
     ///
     /// Provide the value as the second argument, or omit it to read the value
     /// from stdin (e.g. `echo secret | salusc store mykey`). The store must be
-    /// unlocked first.
+    /// unlocked first. If the key already exists, prompts for confirmation
+    /// before overwriting unless `--force` is given.
     Store {
         /// The key to store the value under
         #[arg(value_name = "KEY")]
@@ -152,6 +153,9 @@ pub(crate) enum Commands {
         /// Maximum bytes to read from stdin (default: 65536)
         #[arg(long, value_name = "BYTES")]
         max_value_bytes: Option<usize>,
+        /// Overwrite an existing value without prompting for confirmation
+        #[arg(short, long)]
+        force: bool,
     },
     /// Read and decrypt the value stored under a key
     ///

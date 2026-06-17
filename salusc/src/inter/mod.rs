@@ -359,10 +359,51 @@ impl Inter {
         }
     }
 
-    pub(crate) async fn store(&self, key: String, value: String) -> Result<()> {
-        let message = Action::Store(Store::builder().key(key).value(value).build());
-        if let Response::Error(error) = self.send(message).await? {
-            eprintln!("Error occurred while storing value: {error}");
+    pub(crate) async fn store(&self, key: String, value: String, force: bool) -> Result<()> {
+        let message = Action::Store(
+            Store::builder()
+                .key(key.clone())
+                .value(value.clone())
+                .force(force)
+                .build(),
+        );
+        match self.send(message).await? {
+            Response::Success => {}
+            Response::KeyExists => {
+                // The key already exists. Confirm before overwriting; when stdin
+                // is not a terminal we cannot prompt, so a non-interactive
+                // overwrite must pass `--force` rather than be silently confirmed
+                // by piped input.
+                if !stdin().is_terminal() {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "Refusing to overwrite existing key '{key}' without confirmation; \
+                             re-run with --force to overwrite"
+                        )
+                        .red()
+                        .bold()
+                    );
+                    return Ok(());
+                }
+                let answer = prompt_line(&format!("Overwrite key '{key}'? [y/N]: "))?;
+                let answer = answer.trim().to_ascii_lowercase();
+                if answer != "y" && answer != "yes" {
+                    println!("{}", "Aborted; nothing was stored.".yellow());
+                    return Ok(());
+                }
+                let forced =
+                    Action::Store(Store::builder().key(key).value(value).force(true).build());
+                if let Response::Error(error) = self.send(forced).await? {
+                    eprintln!("Error occurred while storing value: {error}");
+                }
+            }
+            Response::Error(error) => {
+                eprintln!("Error occurred while storing value: {error}");
+            }
+            _ => {
+                eprintln!("Unexpected response from salusd");
+            }
         }
         Ok(())
     }

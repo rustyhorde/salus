@@ -53,6 +53,7 @@ where
             key,
             value,
             max_value_bytes,
+            force,
         } => {
             const DEFAULT_MAX: usize = 65_536; // 64 KiB
             let max_bytes = max_value_bytes
@@ -84,7 +85,7 @@ where
                 }
                 buf
             };
-            inter.store(key, value).await?;
+            inter.store(key, value, force).await?;
         }
 
         Commands::Read { key } => inter.read(key).await?,
@@ -108,7 +109,7 @@ where
         } => {
             let secret = generate::generate(length, caps, numbers, special, passphrase, kind)?;
             if let Some(key) = key {
-                inter.store(key, secret.clone()).await?;
+                inter.store(key, secret.clone(), false).await?;
             }
             generate::print_secret(&secret);
         }

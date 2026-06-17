@@ -247,8 +247,24 @@ impl ShareStore {
         }
     }
 
-    pub(crate) fn store(&self, key: &str, mut value: Vec<u8>) -> Result<Response> {
+    pub(crate) fn store(&self, key: &str, mut value: Vec<u8>, force: bool) -> Result<Response> {
         if let Some(enc_key) = &self.key {
+            // Collision protection: unless the caller forces the write, refuse to
+            // overwrite an existing key. Checked before sealing so a refused
+            // overwrite does no needless encryption.
+            if !force {
+                let mut exists = false;
+                unlock_redb(&self.redb, |db| -> Result<()> {
+                    exists =
+                        read_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, key.to_string())?
+                            .is_some();
+                    Ok(())
+                })?;
+                if exists {
+                    info!("Refusing to overwrite existing key without force: {key}");
+                    return Ok(Response::KeyExists);
+                }
+            }
             let rnkey = RandomizedNonceKey::new(&AES_256_GCM, enc_key)
                 .with_context(|| Error::NonceKeyGen)?;
             let nonce = rnkey.seal_in_place_append_tag(Aad::from(key.as_bytes()), &mut value)?;
@@ -435,7 +451,7 @@ mod test {
         }
         assert!(matches!(store.unlock()?, Response::Success));
         assert!(matches!(
-            store.store("alpha", b"top-secret".to_vec())?,
+            store.store("alpha", b"top-secret".to_vec(), false)?,
             Response::Success
         ));
 
@@ -445,6 +461,43 @@ mod test {
 
         // Deleting again is idempotent: nothing to remove.
         assert!(matches!(store.delete("alpha")?, Response::KeyNotFound));
+        Ok(())
+    }
+
+    #[test]
+    fn store_refuses_overwrite_without_force() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+
+        // First write under a fresh key succeeds.
+        assert!(matches!(
+            store.store("alpha", b"first".to_vec(), false)?,
+            Response::Success
+        ));
+
+        // A second write without force is refused and leaves the old value intact.
+        assert!(matches!(
+            store.store("alpha", b"second".to_vec(), false)?,
+            Response::KeyExists
+        ));
+        match store.read("alpha")? {
+            Response::Value(Some(value)) => assert_eq!(value, b"first"),
+            other => bail!("expected the original value, got {other:?}"),
+        }
+
+        // With force the value is overwritten.
+        assert!(matches!(
+            store.store("alpha", b"second".to_vec(), true)?,
+            Response::Success
+        ));
+        match store.read("alpha")? {
+            Response::Value(Some(value)) => assert_eq!(value, b"second"),
+            other => bail!("expected the overwritten value, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -464,7 +517,7 @@ mod test {
         }
         assert!(matches!(store.unlock()?, Response::Success));
         assert!(matches!(
-            store.store("alpha", b"top-secret".to_vec())?,
+            store.store("alpha", b"top-secret".to_vec(), false)?,
             Response::Success
         ));
 

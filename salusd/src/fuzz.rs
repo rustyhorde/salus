@@ -62,7 +62,7 @@ fn build_unlocked_store() -> Result<ShareStore> {
         other => bail!("expected successful unlock, got {other:?}"),
     }
     for key in SEED_KEYS {
-        let _stored = store.store(key, format!("value-for-{key}").into_bytes())?;
+        let _stored = store.store(key, format!("value-for-{key}").into_bytes(), true)?;
     }
     Ok(store)
 }
@@ -90,7 +90,7 @@ pub fn store_roundtrip(key: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
         let store = store
             .as_ref()
             .map_err(|e| anyhow!("fuzz store initialization failed: {e}"))?;
-        let _stored = store.store(key, value.to_vec())?;
+        let _stored = store.store(key, value.to_vec(), true)?;
         match store.read(key)? {
             Response::Value(plaintext) => Ok(plaintext),
             other => bail!("expected a value from read, got {other:?}"),

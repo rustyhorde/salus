@@ -178,9 +178,9 @@ where
     }
 
     async fn store(&mut self, value: Store) -> Result<()> {
-        let (key, value) = value.into_parts();
+        let (key, value, force) = value.into_parts();
         match self.unlock_store(|store| -> Result<Response> {
-            store.store(&key, value.as_bytes().to_vec())
+            store.store(&key, value.as_bytes().to_vec(), force)
         }) {
             Ok(response) => {
                 self.response(response).await?;
