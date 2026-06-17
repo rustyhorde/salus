@@ -100,6 +100,27 @@ where
     }
 }
 
+/// Remove `key` from `table_def`, returning `true` when a value was present and
+/// removed, `false` when the key was absent. Symmetric with [`write_value`] and
+/// [`read_value`].
+pub(crate) fn delete_value<'a, K, V>(
+    db: &mut Database,
+    table_def: TableDefinition<'_, K, V>,
+    key: K,
+) -> Result<bool>
+where
+    K: Key + Borrow<K::SelfType<'a>>,
+    V: Value + Borrow<V::SelfType<'a>>,
+{
+    let write_txn = db.begin_write()?;
+    let existed = {
+        let mut table = write_txn.open_table(table_def)?;
+        table.remove(key)?.is_some()
+    };
+    write_txn.commit()?;
+    Ok(existed)
+}
+
 fn database_absolute_path<D>(defaults: &D) -> Result<PathBuf>
 where
     D: PathDefaults,

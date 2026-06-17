@@ -23,7 +23,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     db::{
         CHECK_KEY_KEY, INITIALIZED_KEY, NUM_SHARES_KEY, SALUS_CONFIG_TABLE_DEF,
-        SALUS_VAL_TABLE_DEF, THRESHOLD_KEY, read_value, unlock_redb,
+        SALUS_VAL_TABLE_DEF, THRESHOLD_KEY, delete_value, read_value, unlock_redb,
         values::{config::ConfigVal, salus::SalusVal},
         write_value,
     },
@@ -316,6 +316,35 @@ impl ShareStore {
         }
     }
 
+    pub(crate) fn delete(&self, key: &str) -> Result<Response> {
+        if self.key.is_none() {
+            return Err(Error::StoreNotUnlocked.into());
+        }
+        let mut removed = false;
+        unlock_redb(&self.redb, |db| -> Result<()> {
+            match delete_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, key.to_string()) {
+                Err(e) => {
+                    error!("Error deleting value from database: {e}");
+                    return Err(e);
+                }
+                Ok(existed) => {
+                    removed = existed;
+                    if existed {
+                        info!("Deleted value under key: {key}");
+                    } else {
+                        info!("Key not found for delete: {key}");
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        if removed {
+            Ok(Response::Success)
+        } else {
+            Ok(Response::KeyNotFound)
+        }
+    }
+
     pub(crate) fn find(&self, regex: &str) -> Result<Response> {
         let mut matches = vec![];
         trace!("Finding keys matching regex: {regex}");
@@ -394,6 +423,35 @@ mod test {
         assert!(matches!(store.unlock()?, Response::UnlockFailed));
         assert!(store.key.is_none());
         assert_eq!(store.key_generation(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_removes_stored_value() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+        assert!(matches!(
+            store.store("alpha", b"top-secret".to_vec())?,
+            Response::Success
+        ));
+
+        // Deleting a present key reports success and the value is gone.
+        assert!(matches!(store.delete("alpha")?, Response::Success));
+        assert!(matches!(store.read("alpha")?, Response::Value(None)));
+
+        // Deleting again is idempotent: nothing to remove.
+        assert!(matches!(store.delete("alpha")?, Response::KeyNotFound));
+        Ok(())
+    }
+
+    #[test]
+    fn delete_before_unlock_errors() -> Result<()> {
+        let store = temp_store()?;
+        assert!(store.delete("alpha").is_err());
         Ok(())
     }
 

@@ -152,6 +152,8 @@ pub enum Action {
     Store(Store),
     /// Read an encrypted value
     Read(String),
+    /// Delete a stored value by key
+    Delete(String),
     /// Get the threshold
     GetThreshold,
     /// Find a key

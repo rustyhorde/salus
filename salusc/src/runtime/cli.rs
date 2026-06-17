@@ -9,8 +9,15 @@
 use clap::{ArgAction, Parser, Subcommand};
 use config::{ConfigError, Map, Source, Value, ValueKind};
 
+/// Command-line client for the salus secret store.
+///
+/// salusc talks to the `salusd` daemon over a local IPC socket. Initialize the
+/// store with `shares`, reconstruct the key with `unlock`, then `store`, `read`,
+/// `find`, and `delete` secrets. When the `salus-agent` is enrolled it can
+/// supply the unlock shares for you (see `enroll`). The client holds no key
+/// material and performs no cryptography itself.
 #[derive(Clone, Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about)]
 pub(crate) struct Cli {
     /// Set logging verbosity.  More v's, more verbose.
     #[clap(
@@ -100,18 +107,28 @@ impl Source for Cli {
 
 #[derive(Clone, Debug, Subcommand)]
 pub(crate) enum Commands {
+    /// Initialize the store and print its key shares (first-time setup, once)
+    ///
+    /// Generates a fresh master key, splits it into Shamir shares, and prints
+    /// them a single time. Record them somewhere safe — they are required to
+    /// `unlock` the store and are never shown again.
     Shares {
         /// The number of shares to create
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "5", value_name = "COUNT")]
         num_shares: u8,
-        /// The number of shares required to reconstruct the secret
-        #[arg(short, long, default_value = "3")]
+        /// The number of shares required to reconstruct the key
+        #[arg(short, long, default_value = "3", value_name = "COUNT")]
         threshold: u8,
     },
+    /// Reconstruct the key in the daemon's memory from `threshold` shares
+    ///
+    /// Prompts for the required shares (or has the agent supply them when a set
+    /// is enrolled), then holds the key for the unlock duration before it
+    /// auto-clears.
     Unlock {
         /// The named enrollment set to unlock with (when the agent is enrolled).
         /// Omit to use the only set, or to be prompted when several exist.
-        #[arg(short, long)]
+        #[arg(short, long, value_name = "NAME")]
         set: Option<String>,
         /// How long the daemon should hold the key: a number of seconds (capped
         /// at 24h), or "forever". Omit to use the daemon's configured default.
@@ -120,25 +137,46 @@ pub(crate) enum Commands {
     },
     /// Clear the daemon's unlocked key and cancel any pending auto-clear timer
     Lock,
+    /// Encrypt and store a value under a key
+    ///
+    /// Provide the value as the second argument, or omit it to read the value
+    /// from stdin (e.g. `echo secret | salusc store mykey`). The store must be
+    /// unlocked first.
     Store {
         /// The key to store the value under
-        #[arg(short, long)]
+        #[arg(value_name = "KEY")]
         key: String,
-        /// The value to store; if omitted, reads from stdin
-        #[arg(short, long)]
+        /// The value to store; if omitted, it is read from stdin
+        #[arg(value_name = "VALUE")]
         value: Option<String>,
         /// Maximum bytes to read from stdin (default: 65536)
-        #[arg(long)]
+        #[arg(long, value_name = "BYTES")]
         max_value_bytes: Option<usize>,
     },
+    /// Read and decrypt the value stored under a key
+    ///
+    /// The store must be unlocked first.
     Read {
         /// The key to read the value from
-        #[arg(short, long)]
-        key_opt: Option<String>,
+        #[arg(value_name = "KEY")]
+        key: String,
     },
+    /// Permanently delete the value stored under a key
+    ///
+    /// Prompts for confirmation unless `--force` is given. The store must be
+    /// unlocked first.
+    Delete {
+        /// The key to delete from the store
+        #[arg(value_name = "KEY")]
+        key: String,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Search stored keys by regular expression
     Find {
-        /// The regex to find keys with
-        #[arg(index = 1)]
+        /// The regex to match key names against
+        #[arg(index = 1, value_name = "REGEX")]
         regex: String,
     },
     /// Enroll a named set of shares so the agent can supply them at unlock

@@ -52,6 +52,7 @@ where
             Action::Lock => self.lock().await?,
             Action::Store(store) => self.store(store).await?,
             Action::Read(key) => self.read(key).await?,
+            Action::Delete(key) => self.delete(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
             Action::FindKey(key) => self.find(key).await?,
         }
@@ -203,6 +204,18 @@ where
         Ok(())
     }
 
+    async fn delete(&mut self, key: String) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> { store.delete(&key) }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn find(&mut self, regex: String) -> Result<()> {
         match self.unlock_store(|store| -> Result<Response> { store.find(&regex) }) {
             Ok(response) => {
@@ -302,6 +315,15 @@ mod test {
         let store = Store::builder().key("k").value("v").build();
         assert!(matches!(
             run(Action::Store(store)).await?,
+            Response::Error(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_before_unlock_errors() -> Result<()> {
+        assert!(matches!(
+            run(Action::Delete("k".to_string())).await?,
             Response::Error(_)
         ));
         Ok(())
