@@ -336,8 +336,84 @@ impl Inter {
             keystore::enroll_full(&name, &shares, &passphrase, independent_auto, force)?;
         }
 
+        // Refresh the running agent so the newly enrolled set is offered at the
+        // next unlock without waiting for an agent restart.
+        self.reload_agent().await;
         println!("{}", format!("Enrolled set '{name}'.").green().bold());
         Ok(())
+    }
+
+    /// Remove a named enrolled set, or every set when `all` is set.
+    ///
+    /// Confirms by default; pass `force` to skip the prompt. After a change, the
+    /// running agent is asked to re-read its sets so a forgotten set stops being
+    /// offered at unlock without an agent restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if neither a name nor `all` is given, or a keyring
+    /// operation fails.
+    pub(crate) async fn forget(&self, name: Option<&str>, all: bool, force: bool) -> Result<()> {
+        if !all && name.is_none() {
+            bail!("specify --name <set> to remove one set, or --all to remove every set");
+        }
+
+        // Confirm by default. A destructive forget should never proceed without
+        // an explicit yes: when stdin is not a terminal we cannot prompt, so a
+        // non-interactive forget must pass `--force` rather than be silently
+        // confirmed by piped input.
+        if !force {
+            if !stdin().is_terminal() {
+                eprintln!(
+                    "{}",
+                    "Refusing to forget without confirmation; \
+                     re-run with --force for non-interactive use"
+                        .red()
+                        .bold()
+                );
+                return Ok(());
+            }
+            let prompt = if all {
+                "Forget ALL enrolled sets? [y/N]: ".to_string()
+            } else if let Some(name) = name {
+                format!("Forget enrolled set '{name}'? [y/N]: ")
+            } else {
+                // Unreachable: the guard above rejects the no-target case.
+                "Forget enrolled set? [y/N]: ".to_string()
+            };
+            let answer = prompt_line(&prompt)?;
+            let answer = answer.trim().to_ascii_lowercase();
+            if answer != "y" && answer != "yes" {
+                println!("{}", "Aborted; nothing was forgotten.".yellow());
+                return Ok(());
+            }
+        }
+
+        if all {
+            keystore::forget_all()?;
+            self.reload_agent().await;
+            println!("{}", "Removed all enrolled sets.".green().bold());
+        } else if let Some(name) = name {
+            if keystore::forget(name)? {
+                self.reload_agent().await;
+                println!(
+                    "{}",
+                    format!("Removed enrolled set '{name}'.").green().bold()
+                );
+            } else {
+                eprintln!("{}", format!("No enrolled set named '{name}'.").yellow());
+            }
+        }
+        Ok(())
+    }
+
+    /// Ask the running agent (if any) to re-read its enrolled sets from the
+    /// keyring.
+    ///
+    /// Best-effort: an unreachable agent is fine — it loads a fresh view at its
+    /// next start — so any error is swallowed rather than surfaced.
+    async fn reload_agent(&self) {
+        let _ignored = self.agent_send(AgentAction::Reload).await;
     }
 
     pub(crate) async fn enroll_status(&self) -> Result<()> {
@@ -709,31 +785,6 @@ fn render_prompt(matches: &[String], selection: usize, query: &str) -> Result<()
         }
     }
     out.flush()?;
-    Ok(())
-}
-
-/// Remove a named enrolled set, or every set when `all` is set.
-///
-/// # Errors
-///
-/// Returns an error if neither a name nor `--all` is given, or a keyring
-/// operation fails.
-pub(crate) fn forget(name: Option<&str>, all: bool) -> Result<()> {
-    if all {
-        keystore::forget_all()?;
-        println!("{}", "Removed all enrolled sets.".green().bold());
-    } else if let Some(name) = name {
-        if keystore::forget(name)? {
-            println!(
-                "{}",
-                format!("Removed enrolled set '{name}'.").green().bold()
-            );
-        } else {
-            eprintln!("{}", format!("No enrolled set named '{name}'.").yellow());
-        }
-    } else {
-        bail!("specify --name <set> to remove one set, or --all to remove every set");
-    }
     Ok(())
 }
 

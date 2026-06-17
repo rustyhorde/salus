@@ -48,6 +48,12 @@ where
                     sets: self.with_store(|store| store.status()),
                 }
             }
+            AgentAction::Reload => match self.with_store(AgentState::reload) {
+                Ok(()) => AgentResponse::Status {
+                    sets: self.with_store(|store| store.status()),
+                },
+                Err(e) => AgentResponse::Error(e.to_string()),
+            },
         };
         self.respond(response).await
     }

@@ -48,6 +48,11 @@ pub enum AgentAction {
         /// The set whose cache to clear, or `None` for all sets.
         set: Option<String>,
     },
+    /// Re-read enrolled sets from the OS keyring, replacing the in-memory view.
+    ///
+    /// Sent by the client after it enrolls or forgets a set so the running agent
+    /// reflects the change without a restart. Answered with [`AgentResponse::Status`].
+    Reload,
 }
 
 /// A response sent from the `salus-agent` back to the client.

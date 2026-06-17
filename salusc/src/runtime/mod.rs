@@ -15,7 +15,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::{
     config::load,
-    inter::{Inter, forget},
+    inter::Inter,
     runtime::cli::{Cli, Commands},
 };
 
@@ -97,7 +97,7 @@ where
             force,
             independent_auto,
         } => inter.enroll(name, force, independent_auto).await?,
-        Commands::Forget { name, all } => forget(name.as_deref(), all)?,
+        Commands::Forget { name, all, force } => inter.forget(name.as_deref(), all, force).await?,
         Commands::EnrollStatus => inter.enroll_status().await?,
         Commands::Gen {
             length,
