@@ -1960,12 +1960,14 @@ dependencies = [
  "dirs2",
  "interprocess",
  "libsalus",
+ "rand 0.10.1",
  "rustversion",
  "salus-agent",
  "scanpw",
  "serde",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

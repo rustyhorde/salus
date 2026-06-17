@@ -20,6 +20,7 @@ use crate::{
 };
 
 mod cli;
+mod generate;
 
 pub(crate) async fn run<I, T>(args: Option<I>) -> Result<()>
 where
@@ -96,6 +97,21 @@ where
         } => inter.enroll(name, force, independent_auto).await?,
         Commands::Forget { name, all } => forget(name.as_deref(), all)?,
         Commands::EnrollStatus => inter.enroll_status().await?,
+        Commands::Gen {
+            length,
+            caps,
+            numbers,
+            special,
+            passphrase,
+            kind,
+            key,
+        } => {
+            let secret = generate::generate(length, caps, numbers, special, passphrase, kind)?;
+            if let Some(key) = key {
+                inter.store(key, secret.clone()).await?;
+            }
+            generate::print_secret(&secret);
+        }
     }
 
     Ok(())

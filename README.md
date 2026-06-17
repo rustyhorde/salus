@@ -95,6 +95,9 @@ cargo clippy --all-targets   # lints (see note below)
    salusc read mykey
    salusc find '^my'
    salusc delete mykey                # prompts for confirmation (--force to skip)
+   salusc gen                         # print a random 30-char password
+   salusc gen --passphrase 5          # print a 5-word passphrase
+   salusc gen -k mykey                # generate and store under mykey (must be unlocked)
    ```
 
 The daemon must be unlocked before `store`/`read` succeed (otherwise
@@ -238,6 +241,13 @@ Command options:
 - `find` — `<REGEX>` (positional).
 - `enroll` — `-n, --name <NAME>` (default `default`), `--force`, `--independent-auto`.
 - `forget` — `-n, --name <NAME>`, `--all`.
+- `gen` — generate a password or passphrase locally (no daemon needed unless
+  storing). `-l, --length <N>` (default `30`, range `8`–`1024`), `-c, --caps`,
+  `-n, --numbers`, `-s, --special` (each default `true`; disable with e.g.
+  `-c false`). `--passphrase <N>` makes an `N`-word passphrase (range `1`–`20`)
+  with `--kind <space|hyphen|dot|camel>` formatting (default `space`);
+  `--passphrase`/`--kind` cannot be combined with the character-class flags.
+  `-k, --key <KEY>` also stores the result under `KEY` (store must be unlocked).
 
 ### Enrolling with the agent
 
@@ -528,6 +538,11 @@ Licensed under either of
 
 at your option.
 
+The bundled passphrase word list (`salusc/src/runtime/eff_large_wordlist.txt`)
+is the EFF "large" word list, © Electronic Frontier Foundation, distributed
+under the [Creative Commons Attribution 3.0 United States][cc-by-3] license. See
+<https://www.eff.org/dice>.
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
@@ -539,3 +554,4 @@ dual licensed as above, without any additional terms or conditions.
 [redb]: https://crates.io/crates/redb
 [crossterm]: https://crates.io/crates/crossterm
 [bincode]: https://crates.io/crates/bincode-next
+[cc-by-3]: https://creativecommons.org/licenses/by/3.0/us/

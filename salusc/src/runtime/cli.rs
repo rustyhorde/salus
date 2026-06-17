@@ -6,7 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use config::{ConfigError, Map, Source, Value, ValueKind};
 
 /// Command-line client for the salus secret store.
@@ -203,6 +203,91 @@ pub(crate) enum Commands {
     },
     /// List the enrolled sets and whether the agent is reachable
     EnrollStatus,
+    /// Generate a random password or passphrase
+    ///
+    /// By default produces a 30-character password drawn from lowercase letters
+    /// plus (unless disabled) uppercase letters, digits, and symbols, with at
+    /// least one character from each enabled class. Use `--passphrase N` to
+    /// generate an N-word passphrase instead; `--passphrase` and `--kind`
+    /// cannot be combined with the character-class flags (`-l`/`-c`/`-n`/`-s`).
+    /// Pass `-k/--key` to also store the generated value under that key (the
+    /// store must be unlocked).
+    Gen {
+        /// Password length (8-1024)
+        #[arg(
+            short,
+            long,
+            default_value_t = 30,
+            value_parser = clap::value_parser!(u32).range(8..=1024),
+            value_name = "N"
+        )]
+        length: u32,
+        /// Include uppercase letters (pass `-c false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        caps: bool,
+        /// Include digits (pass `-n false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        numbers: bool,
+        /// Include symbols (pass `-s false` to disable)
+        #[arg(
+            short,
+            long,
+            action = ArgAction::Set,
+            num_args = 0..=1,
+            default_value_t = true,
+            default_missing_value = "true",
+            value_name = "BOOL"
+        )]
+        special: bool,
+        /// Generate an N-word passphrase instead of a character password (1-20)
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u32).range(1..=20),
+            value_name = "N",
+            conflicts_with_all = ["length", "caps", "numbers", "special"]
+        )]
+        passphrase: Option<u32>,
+        /// Passphrase word formatting (only meaningful with --passphrase)
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = GenKind::Space,
+            conflicts_with_all = ["length", "caps", "numbers", "special"]
+        )]
+        kind: GenKind,
+        /// Also store the generated value under this key (store must be unlocked)
+        #[arg(short, long, value_name = "KEY")]
+        key: Option<String>,
+    },
+}
+
+/// How the words of a generated passphrase are joined together.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum GenKind {
+    /// Space-separated lowercase words: `correct horse battery staple`
+    Space,
+    /// Hyphen-separated lowercase words: `correct-horse-battery-staple`
+    Hyphen,
+    /// Dot-separated lowercase words: `correct.horse.battery.staple`
+    Dot,
+    /// Capitalized words with no separator: `CorrectHorseBatteryStaple`
+    Camel,
 }
 
 #[cfg(test)]

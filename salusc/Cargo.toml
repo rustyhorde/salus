@@ -36,11 +36,13 @@ crossterm = "0.29.0"
 dirs2 = { workspace = true }
 interprocess = { workspace = true }
 libsalus = { version = "0.1.3", path = "../libsalus" }
+rand = { workspace = true }
 salus-agent = { version = "0.1.3", path = "../salus-agent" }
 scanpw = "1.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { workspace = true, features = ["io-std"] }
 tracing = { workspace = true }
+zeroize = { workspace = true }
 
 [build-dependencies]
 rustversion = { workspace = true }

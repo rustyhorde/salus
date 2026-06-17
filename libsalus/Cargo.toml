@@ -41,4 +41,4 @@ rustversion = { workspace = true }
 
 [dev-dependencies]
 aws-lc-rs = { workspace = true }
-rand = "0.10.1"
+rand = { workspace = true }
