@@ -128,6 +128,33 @@ impl Store {
     }
 }
 
+/// A predictive key-name search request.
+///
+/// The daemon fuzzy-matches `query` against the stored key names and returns the
+/// ranked results (best match first). An empty `query` lists every key name. The
+/// store must be unlocked.
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct SearchQuery {
+    #[builder(into)]
+    query: String,
+    /// Maximum number of results to return; `None` returns every match.
+    limit: Option<usize>,
+}
+
+impl SearchQuery {
+    /// Get the query string.
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Get the result limit, if any.
+    #[must_use]
+    pub fn limit(&self) -> Option<usize> {
+        self.limit
+    }
+}
+
 /// How long the daemon should keep the reconstructed key in memory after a
 /// successful unlock.
 #[derive(Clone, Copy, Debug, Decode, Default, Encode, Eq, PartialEq)]
@@ -167,6 +194,8 @@ pub enum Action {
     GetThreshold,
     /// Find a key
     FindKey(String),
+    /// Predictively (fuzzy) search key names
+    Search(SearchQuery),
 }
 
 /// A response from the daemon

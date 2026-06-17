@@ -32,6 +32,7 @@ bon = { workspace = true }
 dirs2 = { workspace = true }
 getset = { workspace = true }
 interprocess = { workspace = true }
+nucleo-matcher = { workspace = true }
 ssss = "1.0.5"
 tracing = { workspace = true }
 zeroize = { workspace = true }

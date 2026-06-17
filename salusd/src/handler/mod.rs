@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Error, Result};
 use bon::Builder;
-use libsalus::{Action, Init, MAX_UNLOCK_SECONDS, Response, Store, UnlockTimeout, encode};
+use libsalus::{
+    Action, Init, MAX_UNLOCK_SECONDS, Response, SearchQuery, Store, UnlockTimeout, encode,
+};
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
     spawn,
@@ -55,6 +57,7 @@ where
             Action::Delete(key) => self.delete(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
             Action::FindKey(key) => self.find(key).await?,
+            Action::Search(query) => self.search(query).await?,
         }
         Ok(())
     }
@@ -218,6 +221,20 @@ where
 
     async fn find(&mut self, regex: String) -> Result<()> {
         match self.unlock_store(|store| -> Result<Response> { store.find(&regex) }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn search(&mut self, query: SearchQuery) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> {
+            store.search(query.query(), query.limit())
+        }) {
             Ok(response) => {
                 self.response(response).await?;
             }

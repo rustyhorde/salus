@@ -6,15 +6,24 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use std::io::{IsTerminal as _, Write, stdin, stdout};
+use std::io::{IsTerminal as _, Write, stderr, stdin, stdout};
 
 use anyhow::{Context, Result, bail};
 use bon::Builder;
-use crossterm::style::{Color, Stylize, style};
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers, read},
+    queue,
+    style::{Color, Print, Stylize, style},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode, size,
+    },
+};
 use interprocess::local_socket::{tokio::Stream, traits::tokio::Stream as _};
 use libsalus::{
-    Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SetInfo, Share, Store,
-    UnlockTimeout, agent_socket_name, decode, encode, socket_name,
+    Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SearchQuery, SetInfo, Share,
+    Store, UnlockTimeout, agent_socket_name, decode, encode, socket_name,
 };
 use salus_agent::keystore;
 use scanpw::scanpw;
@@ -518,6 +527,180 @@ impl Inter {
         }
         Ok(())
     }
+
+    /// Send a single predictive-search request and return the ranked matches.
+    ///
+    /// A daemon-side error (for example, `StoreNotUnlocked`) is surfaced as an
+    /// `Err` so callers can decide how to present it.
+    async fn send_search(&self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
+        let message = Action::Search(
+            SearchQuery::builder()
+                .query(query)
+                .maybe_limit(limit)
+                .build(),
+        );
+        match self.send(message).await? {
+            Response::Matches(matches) => Ok(matches),
+            Response::Error(error) => bail!("{error}"),
+            _ => bail!("Unexpected response from salusd"),
+        }
+    }
+
+    /// Predictively search stored key names.
+    ///
+    /// With a `query`, prints the ranked matches once. Without one, opens an
+    /// interactive filter prompt.
+    pub(crate) async fn search(&self, query: Option<String>, limit: Option<usize>) -> Result<()> {
+        match query {
+            Some(query) => self.search_once(&query, limit).await,
+            None => self.search_interactive(limit).await,
+        }
+    }
+
+    /// One-shot search: print the ranked matches, reusing the `find` styling.
+    async fn search_once(&self, query: &str, limit: Option<usize>) -> Result<()> {
+        match self.send_search(query, limit).await {
+            Ok(matches) => {
+                if matches.is_empty() {
+                    let no_match_style = style(format!("No keys matched '{query}'")).red().bold();
+                    println!("{no_match_style}");
+                } else {
+                    println!("{}", "Matching keys:".green().bold());
+                    for key in matches {
+                        let key_style = style(key).with(Color::Green).bold();
+                        println!("{key_style}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error occurred while searching keys: {e}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Interactive live-filtering prompt: type to narrow, arrows to move, Enter
+    /// to print the selected key, Esc/Ctrl-C to cancel.
+    async fn search_interactive(&self, limit: Option<usize>) -> Result<()> {
+        if !stdin().is_terminal() || !stderr().is_terminal() {
+            bail!("Interactive search requires a terminal; pass a QUERY argument instead");
+        }
+
+        // Fetch the initial (unfiltered) list first. This also surfaces a locked
+        // store before we ever switch the terminal into raw mode.
+        let mut matches = match self.send_search("", limit).await {
+            Ok(matches) => matches,
+            Err(e) => {
+                eprintln!("Error occurred while searching keys: {e}");
+                return Ok(());
+            }
+        };
+
+        let mut query = String::new();
+        let mut selection = 0usize;
+
+        let guard = TermGuard::enter()?;
+        let selected = loop {
+            render_prompt(&matches, selection, &query)?;
+            match read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Esc, _) => {
+                            break None;
+                        }
+                        (KeyCode::Enter, _) => break matches.get(selection).cloned(),
+                        (KeyCode::Up, _) => selection = selection.saturating_sub(1),
+                        (KeyCode::Down, _) => {
+                            let max = matches.len().saturating_sub(1);
+                            selection = selection.saturating_add(1).min(max);
+                        }
+                        (KeyCode::Backspace, _) => {
+                            let _ = query.pop();
+                            matches = self.send_search(&query, limit).await.unwrap_or_default();
+                            selection = 0;
+                        }
+                        (KeyCode::Char(c), mods)
+                            if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            query.push(c);
+                            matches = self.send_search(&query, limit).await.unwrap_or_default();
+                            selection = 0;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        };
+        // Restore the terminal before any stdout output.
+        drop(guard);
+
+        if let Some(key) = selected {
+            println!("{key}");
+        }
+        Ok(())
+    }
+}
+
+/// Restores the terminal (raw mode + alternate screen + cursor) on scope exit.
+///
+/// The no-panic rule means cleanup cannot rely on unwinding, so a guard
+/// guarantees the terminal is returned to a sane state even on an early return
+/// or error.
+struct TermGuard;
+
+impl TermGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        queue!(stderr(), EnterAlternateScreen, Hide)?;
+        stderr().flush()?;
+        Ok(TermGuard)
+    }
+}
+
+impl Drop for TermGuard {
+    fn drop(&mut self) {
+        // Best-effort restore; nothing actionable if these fail during teardown.
+        drop(queue!(stderr(), Show, LeaveAlternateScreen));
+        drop(stderr().flush());
+        drop(disable_raw_mode());
+    }
+}
+
+/// Draw the interactive search prompt (query line + ranked candidate list) to
+/// the alternate screen on stderr, keeping the selected row visible.
+fn render_prompt(matches: &[String], selection: usize, query: &str) -> Result<()> {
+    let mut out = stderr();
+    let (_, rows) = size().unwrap_or((80, 24));
+    // Reserve one row for the prompt line and one for breathing room.
+    let visible = usize::from(rows).saturating_sub(2).max(1);
+    let start = if selection >= visible {
+        selection.saturating_sub(visible).saturating_add(1)
+    } else {
+        0
+    };
+
+    queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    let header = style(format!("search> {query}")).with(Color::Cyan).bold();
+    queue!(out, Print(format!("{header}\r\n")))?;
+
+    if matches.is_empty() {
+        let empty = style("  (no matching keys)").with(Color::DarkGrey);
+        queue!(out, Print(format!("{empty}\r\n")))?;
+    } else {
+        for (idx, key) in matches.iter().enumerate().skip(start).take(visible) {
+            let line = if idx == selection {
+                style(format!("> {key}"))
+                    .with(Color::Black)
+                    .on(Color::Green)
+            } else {
+                style(format!("  {key}")).with(Color::Green)
+            };
+            queue!(out, Print(format!("{line}\r\n")))?;
+        }
+    }
+    out.flush()?;
+    Ok(())
 }
 
 /// Remove a named enrolled set, or every set when `all` is set.
