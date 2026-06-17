@@ -11,12 +11,13 @@ cargo-fuzz = true
 # Forwards to the workspace crates' `unstable` feature so the fuzz targets and
 # regression tests can be exercised against unstable code paths. Currently a
 # no-op (those `unstable` features are empty), wired up for future use.
-unstable = ["libsalus/unstable", "salusd/unstable"]
+unstable = ["libsalus/unstable", "salus-agent/unstable", "salusd/unstable"]
 
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
 libfuzzer-sys = "0.4.13"
 libsalus = { path = "../libsalus" }
+salus-agent = { path = "../salus-agent", features = ["fuzzing"] }
 salusd = { path = "../salusd", features = ["fuzzing"] }
 
 # Prevent the parent workspace from treating this crate as a member.
@@ -52,6 +53,36 @@ path = "fuzz_targets/fuzz_find_regex.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_agent_action_decode"
+path = "fuzz_targets/fuzz_agent_action_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_agent_response_decode"
+path = "fuzz_targets/fuzz_agent_response_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_agent_unseal"
+path = "fuzz_targets/fuzz_agent_unseal.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_agent_registry_decode"
+path = "fuzz_targets/fuzz_agent_registry_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_db_value_decode"
+path = "fuzz_targets/fuzz_db_value_decode.rs"
+test = false
+doc = false
+
 [[test]]
 name = "regression_action_decode"
 path = "fuzz_targets/regression_action_decode.rs"
@@ -71,3 +102,23 @@ path = "fuzz_targets/regression_store_roundtrip.rs"
 [[test]]
 name = "regression_find_regex"
 path = "fuzz_targets/regression_find_regex.rs"
+
+[[test]]
+name = "regression_agent_action_decode"
+path = "fuzz_targets/regression_agent_action_decode.rs"
+
+[[test]]
+name = "regression_agent_response_decode"
+path = "fuzz_targets/regression_agent_response_decode.rs"
+
+[[test]]
+name = "regression_agent_unseal"
+path = "fuzz_targets/regression_agent_unseal.rs"
+
+[[test]]
+name = "regression_agent_registry_decode"
+path = "fuzz_targets/regression_agent_registry_decode.rs"
+
+[[test]]
+name = "regression_db_value_decode"
+path = "fuzz_targets/regression_db_value_decode.rs"

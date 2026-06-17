@@ -66,7 +66,7 @@ where
                 }
                 let mut buf = String::new();
                 let _ = tokio::io::stdin()
-                    .take(max_bytes as u64 + 1)
+                    .take((max_bytes as u64).saturating_add(1))
                     .read_to_string(&mut buf)
                     .await?;
                 if buf.len() > max_bytes {

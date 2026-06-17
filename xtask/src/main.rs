@@ -21,6 +21,23 @@
 //! cargo xtask dist salus-agent
 //! ```
 
+// no-panic restriction lints: handle every error, never panic (see CLAUDE.md)
+#![cfg_attr(
+    nightly,
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::get_unwrap,
+        clippy::unwrap_in_result,
+    )
+)]
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -47,7 +64,9 @@ fn main() -> Result<()> {
 
     match matches.subcommand() {
         Some(("dist", sub)) => {
-            let binary = sub.get_one::<String>("binary").expect("required");
+            let binary = sub
+                .get_one::<String>("binary")
+                .context("missing required `binary` argument")?;
             dist(binary)
         }
         _ => bail!("unknown subcommand"),

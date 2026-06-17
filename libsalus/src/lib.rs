@@ -216,6 +216,22 @@
 )]
 // clippy lints
 #![cfg_attr(nightly, deny(clippy::all, clippy::pedantic))]
+// no-panic restriction lints: handle every error, never panic (see CLAUDE.md)
+#![cfg_attr(
+    nightly,
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::get_unwrap,
+        clippy::unwrap_in_result,
+    )
+)]
 // rustdoc lints
 #![cfg_attr(
     nightly,
@@ -360,6 +376,8 @@ pub fn agent_socket_name<'a>(override_path: Option<&str>) -> Result<Name<'a>> {
 mod test {
     use std::path::PathBuf;
 
+    use anyhow::{Context, Result};
+
     use super::{
         AGENT_SOCKET_FILE_NAME, SOCKET_FILE_NAME, SocketTarget, agent_socket_name, socket_name,
         socket_target, target_to_name,
@@ -385,28 +403,32 @@ mod test {
     }
 
     #[test]
-    fn default_used_when_nothing_configured() {
+    fn default_used_when_nothing_configured() -> Result<()> {
         // With neither an override nor the env var set, the default depends on
         // platform support: a bare namespaced name, or a file under the
         // runtime/temp directory. Either way it must end with the base name.
         match socket_target(None, None, SOCKET_FILE_NAME) {
             SocketTarget::Namespaced(name) => assert_eq!(name, SOCKET_FILE_NAME),
             SocketTarget::File(path) => {
-                assert_eq!(path.file_name().unwrap(), SOCKET_FILE_NAME);
+                let file_name = path.file_name().context("socket path has no file name")?;
+                assert_eq!(file_name, SOCKET_FILE_NAME);
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn agent_default_uses_agent_base_name() {
+    fn agent_default_uses_agent_base_name() -> Result<()> {
         // The agent default must resolve to the agent base name, not the
         // daemon's, so the two sockets never collide.
         match socket_target(None, None, AGENT_SOCKET_FILE_NAME) {
             SocketTarget::Namespaced(name) => assert_eq!(name, AGENT_SOCKET_FILE_NAME),
             SocketTarget::File(path) => {
-                assert_eq!(path.file_name().unwrap(), AGENT_SOCKET_FILE_NAME);
+                let file_name = path.file_name().context("socket path has no file name")?;
+                assert_eq!(file_name, AGENT_SOCKET_FILE_NAME);
             }
         }
+        Ok(())
     }
 
     #[test]

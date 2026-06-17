@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "libsalus"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -1924,7 +1924,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "salus-agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "salusc"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bon",
@@ -1970,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "salusd"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -2986,12 +2986,13 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
  "clap_mangen",
+ "rustversion",
 ]
 
 [[package]]

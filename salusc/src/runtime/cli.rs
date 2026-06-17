@@ -169,34 +169,38 @@ pub(crate) enum Commands {
 
 #[cfg(test)]
 mod test {
+    use anyhow::Result;
     use clap::Parser;
     use config::Source;
 
     use super::Cli;
 
     #[test]
-    fn collect_omits_unset_flags() {
-        let cli = Cli::try_parse_from(["salusc", "unlock"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_omits_unset_flags() -> Result<()> {
+        let cli = Cli::try_parse_from(["salusc", "unlock"])?;
+        let map = cli.collect()?;
         assert!(
             map.is_empty(),
             "default Cli should emit nothing, got {map:?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn collect_includes_set_socket_path() {
-        let cli = Cli::try_parse_from(["salusc", "-s", "/tmp/s.sock", "unlock"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_includes_set_socket_path() -> Result<()> {
+        let cli = Cli::try_parse_from(["salusc", "-s", "/tmp/s.sock", "unlock"])?;
+        let map = cli.collect()?;
         assert!(map.contains_key("socket_path"));
         assert!(!map.contains_key("verbose"));
+        Ok(())
     }
 
     #[test]
-    fn collect_includes_agent_socket_path() {
-        let cli = Cli::try_parse_from(["salusc", "-a", "/tmp/a.sock", "unlock"]).unwrap();
-        let map = cli.collect().unwrap();
+    fn collect_includes_agent_socket_path() -> Result<()> {
+        let cli = Cli::try_parse_from(["salusc", "-a", "/tmp/a.sock", "unlock"])?;
+        let map = cli.collect()?;
         assert!(map.contains_key("agent_socket_path"));
         assert!(!map.contains_key("socket_path"));
+        Ok(())
     }
 }

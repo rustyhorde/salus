@@ -154,10 +154,7 @@ impl ShareStore {
                         &mut check_key,
                     )?;
                     unlock_redb(&self.redb, |db| -> Result<()> {
-                        let salus_val = SalusVal::builder()
-                            .nonce(*nonce.as_ref())
-                            .ciphertext(check_key.clone())
-                            .build();
+                        let salus_val = SalusVal::from_parts(*nonce.as_ref(), &check_key);
                         write_value::<String, SalusVal>(
                             db,
                             SALUS_VAL_TABLE_DEF,
@@ -213,10 +210,10 @@ impl ShareStore {
                         }
                         Ok(Some(svag)) => {
                             let sv = svag.value();
-                            let nonce = Nonce::from(&sv.nonce());
+                            let nonce = Nonce::from(&sv.nonce()?);
                             let rnkey = RandomizedNonceKey::new(&AES_256_GCM, &key)
                                 .with_context(|| Error::NonceKeyGen)?;
-                            let mut ciphertext = sv.ciphertext().clone();
+                            let mut ciphertext = sv.ciphertext()?.to_vec();
                             // A failed open here means the reconstructed key (and
                             // therefore the supplied shares) is wrong. That is a
                             // normal unlock failure, not a panic and not a hard error.
@@ -256,10 +253,7 @@ impl ShareStore {
                 .with_context(|| Error::NonceKeyGen)?;
             let nonce = rnkey.seal_in_place_append_tag(Aad::from(key.as_bytes()), &mut value)?;
             unlock_redb(&self.redb, |db| -> Result<()> {
-                let salus_val = SalusVal::builder()
-                    .nonce(*nonce.as_ref())
-                    .ciphertext(value.clone())
-                    .build();
+                let salus_val = SalusVal::from_parts(*nonce.as_ref(), &value);
                 match write_value::<String, SalusVal>(
                     db,
                     SALUS_VAL_TABLE_DEF,
@@ -297,10 +291,10 @@ impl ShareStore {
                     }
                     Ok(Some(svag)) => {
                         let sv = svag.value();
-                        let nonce = Nonce::from(&sv.nonce());
+                        let nonce = Nonce::from(&sv.nonce()?);
                         let rnkey = RandomizedNonceKey::new(&AES_256_GCM, enc_key)
                             .with_context(|| Error::NonceKeyGen)?;
-                        let mut ciphertext = sv.ciphertext().clone();
+                        let mut ciphertext = sv.ciphertext()?.to_vec();
                         match rnkey.open_in_place(nonce, Aad::from(key.as_bytes()), &mut ciphertext)
                         {
                             Err(e) => {
@@ -347,6 +341,7 @@ impl ShareStore {
 mod test {
     use std::sync::{Arc, Mutex};
 
+    use anyhow::{Result, anyhow, bail};
     use libsalus::Response;
     use redb::Database;
 
@@ -355,81 +350,78 @@ mod test {
         SALUS_VAL_TABLE_DEF, read_value, unlock_redb, values::salus::SalusVal, write_value,
     };
 
-    fn temp_store() -> ShareStore {
+    fn temp_store() -> Result<ShareStore> {
         // Each test gets its own isolated in-memory database. This avoids the
         // filesystem entirely, so parallel tests can never collide on a shared
         // path and trigger redb's `DatabaseAlreadyOpen`.
-        let db = Database::builder()
-            .create_with_backend(redb::backends::InMemoryBackend::new())
-            .unwrap();
-        ShareStore::builder().redb(Arc::new(Mutex::new(db))).build()
+        let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
+        Ok(ShareStore::builder().redb(Arc::new(Mutex::new(db))).build())
     }
 
-    fn gen_and_collect(store: &mut ShareStore) -> Vec<String> {
-        match store.gen_shares().unwrap() {
-            Response::Shares(shares) => shares.shares().to_vec(),
-            other => panic!("expected shares, got {other:?}"),
+    fn gen_and_collect(store: &mut ShareStore) -> Result<Vec<String>> {
+        match store.gen_shares()? {
+            Response::Shares(shares) => Ok(shares.shares().to_vec()),
+            other => bail!("expected shares, got {other:?}"),
         }
     }
 
     #[test]
-    fn unlock_with_correct_shares_succeeds() {
-        let mut store = temp_store();
-        let shares = gen_and_collect(&mut store);
+    fn unlock_with_correct_shares_succeeds() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
         // Default threshold is 3.
         for share in shares.iter().take(3) {
             store.add_share(share.clone());
         }
-        assert!(matches!(store.unlock().unwrap(), Response::Success));
+        assert!(matches!(store.unlock()?, Response::Success));
         assert!(store.key.is_some());
         assert_eq!(store.key_generation(), 1);
+        Ok(())
     }
 
     #[test]
-    fn unlock_with_wrong_shares_fails_without_panic() {
-        let mut store = temp_store();
-        let _shares = gen_and_collect(&mut store);
+    fn unlock_with_wrong_shares_fails_without_panic() -> Result<()> {
+        let mut store = temp_store()?;
+        let _shares = gen_and_collect(&mut store)?;
 
         // Shares from a *different* store reconstruct a different (wrong) key, so
         // the sentinel GCM open fails. This used to `.unwrap()`-panic (H2).
-        let mut other = temp_store();
-        let wrong = gen_and_collect(&mut other);
+        let mut other = temp_store()?;
+        let wrong = gen_and_collect(&mut other)?;
         for share in wrong.iter().take(3) {
             store.add_share(share.clone());
         }
-        assert!(matches!(store.unlock().unwrap(), Response::UnlockFailed));
+        assert!(matches!(store.unlock()?, Response::UnlockFailed));
         assert!(store.key.is_none());
         assert_eq!(store.key_generation(), 0);
+        Ok(())
     }
 
     #[test]
-    fn relocated_ciphertext_fails_to_decrypt() {
-        let mut store = temp_store();
-        let shares = gen_and_collect(&mut store);
+    fn relocated_ciphertext_fails_to_decrypt() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
         for share in shares.iter().take(3) {
             store.add_share(share.clone());
         }
-        assert!(matches!(store.unlock().unwrap(), Response::Success));
+        assert!(matches!(store.unlock()?, Response::Success));
         assert!(matches!(
-            store.store("alpha", b"top-secret".to_vec()).unwrap(),
+            store.store("alpha", b"top-secret".to_vec())?,
             Response::Success
         ));
 
         // Copy alpha's sealed blob verbatim under a different key name.
         unlock_redb(&store.redb, |db| {
             let sv = read_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, "alpha".to_string())?
-                .expect("alpha present")
+                .ok_or_else(|| anyhow!("alpha present"))?
                 .value();
             write_value::<String, SalusVal>(db, SALUS_VAL_TABLE_DEF, "beta".to_string(), sv)
-        })
-        .unwrap();
+        })?;
 
         // Reading under "beta" must fail: the key name is bound as AAD (H1).
         assert!(store.read("beta").is_err());
         // The original key name still decrypts.
-        assert!(matches!(
-            store.read("alpha").unwrap(),
-            Response::Value(Some(_))
-        ));
+        assert!(matches!(store.read("alpha")?, Response::Value(Some(_))));
+        Ok(())
     }
 }

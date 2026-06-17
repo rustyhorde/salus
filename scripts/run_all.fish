@@ -117,6 +117,11 @@ if test $run_fuzz = true
     run_step cargo +nightly fuzz run fuzz_unlock_key -- -max_total_time=30
     run_step cargo +nightly fuzz run fuzz_store_roundtrip -- -max_total_time=30
     run_step cargo +nightly fuzz run fuzz_find_regex -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_agent_action_decode -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_agent_response_decode -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_agent_unseal -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_agent_registry_decode -- -max_total_time=30
+    run_step cargo +nightly fuzz run fuzz_db_value_decode -- -max_total_time=30
 end
 
 if test $run_install = true

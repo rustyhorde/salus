@@ -11,7 +11,7 @@ name = "salus-agent"
 readme = "../README.md"
 repository = "https://github.com/rustyhorde/salus"
 rust-version = "1.91.1"
-version = "0.1.1"
+version = "0.1.2"
 
 [lib]
 name = "salus_agent"
@@ -22,6 +22,9 @@ name = "salus-agent"
 path = "src/main.rs"
 
 [features]
+# Exposes a small `pub` surface (`keystore::decode_registry`) for the workspace
+# fuzz crate to drive the keyring registry deserialization. Not for normal use.
+fuzzing = []
 unstable = []
 
 [dependencies]
@@ -36,7 +39,7 @@ dirs2 = { workspace = true }
 getset = { workspace = true }
 interprocess = { workspace = true }
 keyring = { workspace = true }
-libsalus = { version = "0.1.1", path = "../libsalus" }
+libsalus = { version = "0.1.2", path = "../libsalus" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["time"] }

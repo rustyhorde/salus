@@ -108,6 +108,7 @@ fn config_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
+    use anyhow::Result;
     use config::{Config, Map};
 
     use super::{ConfigSalusc, config_file_in, env_source};
@@ -119,7 +120,7 @@ mod test {
     }
 
     #[test]
-    fn socket_path_from_env() {
+    fn socket_path_from_env() -> Result<()> {
         let mut env = Map::new();
         let _old = env.insert(
             "SALUSC_SOCKET_PATH".to_string(),
@@ -127,16 +128,17 @@ mod test {
         );
         let config = Config::builder()
             .add_source(env_source("SALUSC").source(Some(env)))
-            .build()
-            .unwrap();
-        let cfg: ConfigSalusc = config.try_deserialize().unwrap();
+            .build()?;
+        let cfg: ConfigSalusc = config.try_deserialize()?;
         assert_eq!(cfg.socket_path(), Some("/tmp/env.sock"));
+        Ok(())
     }
 
     #[test]
-    fn missing_socket_path_defaults_to_none() {
-        let config = Config::builder().build().unwrap();
-        let cfg: ConfigSalusc = config.try_deserialize().unwrap();
+    fn missing_socket_path_defaults_to_none() -> Result<()> {
+        let config = Config::builder().build()?;
+        let cfg: ConfigSalusc = config.try_deserialize()?;
         assert!(cfg.socket_path().is_none());
+        Ok(())
     }
 }

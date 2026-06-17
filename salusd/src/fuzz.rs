@@ -17,11 +17,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use libsalus::Response;
 use redb::{Database, backends::InMemoryBackend};
 
-use crate::store::ShareStore;
+use crate::{
+    db::values::{config::ConfigVal, salus::SalusVal},
+    store::ShareStore,
+};
 
 /// Keys seeded into the cached store so `find` has something to match against.
 const SEED_KEYS: &[&str] = &[
@@ -65,8 +68,10 @@ fn build_unlocked_store() -> Result<ShareStore> {
 }
 
 thread_local! {
-    static STORE: ShareStore =
-        build_unlocked_store().expect("fuzz store initialization must succeed");
+    /// Lazily-built per-thread store. A thread-local initializer cannot return a
+    /// `Result`, so the build outcome is stored and surfaced as an `Err` at each
+    /// access site instead of panicking.
+    static STORE: Result<ShareStore> = build_unlocked_store();
 }
 
 /// Seal `value` under `key`, read it back, and return the decrypted plaintext.
@@ -82,6 +87,9 @@ thread_local! {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn store_roundtrip(key: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
     STORE.with(|store| {
+        let store = store
+            .as_ref()
+            .map_err(|e| anyhow!("fuzz store initialization failed: {e}"))?;
         let _stored = store.store(key, value.to_vec())?;
         match store.read(key)? {
             Response::Value(plaintext) => Ok(plaintext),
@@ -101,8 +109,45 @@ pub fn store_roundtrip(key: &str, value: &[u8]) -> Result<Option<Vec<u8>>> {
 /// database iteration fails.
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn find_regex(pattern: &str) -> Result<Vec<String>> {
-    STORE.with(|store| match store.find(pattern)? {
-        Response::Matches(matches) => Ok(matches),
-        other => bail!("expected matches from find, got {other:?}"),
+    STORE.with(|store| {
+        let store = store
+            .as_ref()
+            .map_err(|e| anyhow!("fuzz store initialization failed: {e}"))?;
+        match store.find(pattern)? {
+            Response::Matches(matches) => Ok(matches),
+            other => bail!("expected matches from find, got {other:?}"),
+        }
     })
+}
+
+/// Parse arbitrary bytes as a stored `salus_config` value.
+///
+/// `ConfigVal` wraps the raw redb bytes infallibly; the real fallible decode is
+/// [`ConfigVal::to_value`], which bincode-decodes the wrapped payload. Config
+/// rows hold a `bool`, so this drives that decode. A fuzz target should assert
+/// that arbitrary (corrupted) bytes yield an `Err`, never a panic.
+///
+/// # Errors
+///
+/// Returns an error if `data` is not a well-formed encoded config value.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn decode_config_val(data: &[u8]) -> Result<()> {
+    let _val = ConfigVal::from_raw_bytes(data).to_value::<bool>()?;
+    Ok(())
+}
+
+/// Parse arbitrary bytes as a stored `salus_store` value (`nonce || ciphertext`).
+///
+/// `SalusVal` wraps the raw redb bytes infallibly; the real fallible path is
+/// splitting off the 12-byte nonce (a truncated row is too short). A fuzz target
+/// should assert that short or corrupted bytes yield an `Err`, never a panic on
+/// the nonce slice.
+///
+/// # Errors
+///
+/// Returns an error if `data` is shorter than the 12-byte nonce.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn decode_salus_val(data: &[u8]) -> Result<()> {
+    let _nonce = SalusVal::from_raw_bytes(data).nonce()?;
+    Ok(())
 }

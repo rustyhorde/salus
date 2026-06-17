@@ -242,20 +242,18 @@ where
 mod test {
     use std::sync::{Arc, Mutex};
 
-    use anyhow::Result;
+    use anyhow::{Result, bail};
     use libsalus::{Action, Response, Store, decode};
     use redb::Database;
 
     use super::ActionHandler;
     use crate::store::ShareStore;
 
-    fn temp_store() -> Arc<Mutex<ShareStore>> {
-        let db = Database::builder()
-            .create_with_backend(redb::backends::InMemoryBackend::new())
-            .unwrap();
-        Arc::new(Mutex::new(
+    fn temp_store() -> Result<Arc<Mutex<ShareStore>>> {
+        let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
+        Ok(Arc::new(Mutex::new(
             ShareStore::builder().redb(Arc::new(Mutex::new(db))).build(),
-        ))
+        )))
     }
 
     fn handler(store: Arc<Mutex<ShareStore>>) -> ActionHandler<Vec<u8>> {
@@ -267,7 +265,7 @@ mod test {
     }
 
     async fn run(action: Action) -> Result<Response> {
-        let mut handler = handler(temp_store());
+        let mut handler = handler(temp_store()?);
         handler.action_handler(action).await?;
         decode::<Response>(&handler.sender)
     }
@@ -276,7 +274,7 @@ mod test {
     async fn gen_shares_responds_with_shares() -> Result<()> {
         match run(Action::GenShares(5, 3)).await? {
             Response::Shares(shares) => assert_eq!(shares.shares().len(), 5),
-            other => panic!("expected shares, got {other:?}"),
+            other => bail!("expected shares, got {other:?}"),
         }
         Ok(())
     }

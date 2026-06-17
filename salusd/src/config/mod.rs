@@ -194,6 +194,7 @@ fn config_file_in(base: &Path, app: &str) -> PathBuf {
 mod test {
     use std::path::Path;
 
+    use anyhow::Result;
     use config::{Config, Map};
 
     use super::{ConfigSalusd, DEFAULT_KEY_TIMEOUT, config_file_in, env_source};
@@ -205,18 +206,19 @@ mod test {
     }
 
     #[test]
-    fn missing_fields_fall_back_to_defaults() {
+    fn missing_fields_fall_back_to_defaults() -> Result<()> {
         // No source provides any value; `#[serde(default)]` must fill them all.
-        let config = Config::builder().build().unwrap();
-        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+        let config = Config::builder().build()?;
+        let cfg: ConfigSalusd = config.try_deserialize()?;
         assert_eq!(cfg.key_timeout(), DEFAULT_KEY_TIMEOUT);
         assert_eq!(cfg.verbose(), 0);
         assert!(!cfg.enable_std_output());
         assert!(cfg.socket_path().is_none());
+        Ok(())
     }
 
     #[test]
-    fn env_separators_map_flat_and_nested_fields() {
+    fn env_separators_map_flat_and_nested_fields() -> Result<()> {
         // Single underscores stay within the field name; the double underscore
         // descends into the nested `tracing` struct.
         let mut map = Map::new();
@@ -227,10 +229,10 @@ mod test {
         );
         let config = Config::builder()
             .add_source(env_source("SALUSD").source(Some(map)))
-            .build()
-            .unwrap();
-        let cfg: ConfigSalusd = config.try_deserialize().unwrap();
+            .build()?;
+        let cfg: ConfigSalusd = config.try_deserialize()?;
         assert_eq!(cfg.key_timeout(), 99);
         assert!(cfg.tracing().with_target());
+        Ok(())
     }
 }
