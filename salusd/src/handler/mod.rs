@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Error, Result};
 use bon::Builder;
-use libsalus::{Action, Init, MAX_UNLOCK_SECONDS, Response, Store, UnlockTimeout, encode};
+use libsalus::{
+    Action, Init, MAX_UNLOCK_SECONDS, Response, SearchQuery, Store, UnlockTimeout, encode,
+};
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
     spawn,
@@ -55,6 +57,7 @@ where
             Action::Delete(key) => self.delete(key).await?,
             Action::GetThreshold => self.get_threshold().await?,
             Action::FindKey(key) => self.find(key).await?,
+            Action::Search(query) => self.search(query).await?,
         }
         Ok(())
     }
@@ -228,6 +231,32 @@ where
         Ok(())
     }
 
+    async fn search(&mut self, query: SearchQuery) -> Result<()> {
+        match self.unlock_store(|store| -> Result<Response> {
+            store.search(query.query(), query.limit())
+        }) {
+            Ok(response) => {
+                self.response(response).await?;
+            }
+            Err(e) => {
+                self.error(e).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Answer a request the daemon could not decode with a clear error.
+    ///
+    /// Sent when the incoming bytes do not decode to a known `Action` (for
+    /// example, the client is newer than this daemon), so the client receives an
+    /// actionable message instead of an empty response.
+    pub(crate) async fn decode_error(&mut self) -> Result<()> {
+        self.response(Response::Error(
+            "salusd could not decode the request; the client may be newer than this daemon".into(),
+        ))
+        .await
+    }
+
     async fn response(&mut self, message: Response) -> Result<()> {
         let message = encode(message)?;
         self.sender.write_all(&message).await?;
@@ -256,7 +285,7 @@ mod test {
     use std::sync::{Arc, Mutex};
 
     use anyhow::{Result, bail};
-    use libsalus::{Action, Response, Store, decode};
+    use libsalus::{Action, Response, SearchQuery, Share, Store, UnlockTimeout, decode};
     use redb::Database;
 
     use super::ActionHandler;
@@ -279,6 +308,16 @@ mod test {
 
     async fn run(action: Action) -> Result<Response> {
         let mut handler = handler(temp_store()?);
+        handler.action_handler(action).await?;
+        decode::<Response>(&handler.sender)
+    }
+
+    /// Run one action on a persistent handler, returning the decoded response.
+    ///
+    /// Unlike [`run`], the handler (and its store) survives across calls so a
+    /// test can drive a full gen/unlock/store/search sequence.
+    async fn run_on(handler: &mut ActionHandler<Vec<u8>>, action: Action) -> Result<Response> {
+        handler.sender.clear();
         handler.action_handler(action).await?;
         decode::<Response>(&handler.sender)
     }
@@ -332,6 +371,71 @@ mod test {
     #[tokio::test]
     async fn lock_responds_success() -> Result<()> {
         assert!(matches!(run(Action::Lock).await?, Response::Success));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_before_unlock_errors() -> Result<()> {
+        let action = Action::Search(SearchQuery::builder().query("x").build());
+        assert!(matches!(run(action).await?, Response::Error(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decode_error_responds_with_error() -> Result<()> {
+        // An undecodable request must produce a `Response::Error` the client can
+        // render, not an empty response that decodes to an opaque error.
+        let mut handler = handler(temp_store()?);
+        handler.decode_error().await?;
+        match decode::<Response>(&handler.sender)? {
+            Response::Error(msg) => assert!(msg.contains("could not decode")),
+            other => bail!("expected an error response, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unlock_then_store_and_search_succeeds() -> Result<()> {
+        // A non-zero key timeout exercises the unlock arm that arms the
+        // auto-clear timer; the timer never fires within the test.
+        let mut handler = ActionHandler::builder()
+            .sender(Vec::<u8>::new())
+            .store(temp_store()?)
+            .key_timeout(3600u64)
+            .build();
+
+        let shares = match run_on(&mut handler, Action::GenShares(5, 3)).await? {
+            Response::Shares(shares) => shares.shares().to_vec(),
+            other => bail!("expected shares, got {other:?}"),
+        };
+        for share in shares.iter().take(3) {
+            let action = Action::Share(Share::builder().share(share.clone()).build());
+            assert!(matches!(
+                run_on(&mut handler, action).await?,
+                Response::Success
+            ));
+        }
+
+        assert!(matches!(
+            run_on(&mut handler, Action::Unlock(UnlockTimeout::Default)).await?,
+            Response::Success
+        ));
+
+        let store = Store::builder().key("aws-prod-key").value("v").build();
+        assert!(matches!(
+            run_on(&mut handler, Action::Store(store)).await?,
+            Response::Success
+        ));
+
+        match run_on(
+            &mut handler,
+            Action::Search(SearchQuery::builder().query("aws").build()),
+        )
+        .await?
+        {
+            Response::Matches(matches) => assert!(matches.iter().any(|k| k == "aws-prod-key")),
+            other => bail!("expected matches, got {other:?}"),
+        }
         Ok(())
     }
 }

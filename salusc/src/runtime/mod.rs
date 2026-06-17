@@ -91,6 +91,7 @@ where
         Commands::Read { key } => inter.read(key).await?,
         Commands::Delete { key, force } => inter.delete(key, force).await?,
         Commands::Find { regex } => inter.find(regex).await?,
+        Commands::Search { query, limit } => inter.search(query, limit).await?,
         Commands::Enroll {
             name,
             force,

@@ -6,15 +6,24 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-use std::io::{IsTerminal as _, Write, stdin, stdout};
+use std::io::{IsTerminal as _, Write, stderr, stdin, stdout};
 
 use anyhow::{Context, Result, bail};
 use bon::Builder;
-use crossterm::style::{Color, Stylize, style};
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers, read},
+    queue,
+    style::{Color, Print, Stylize, style},
+    terminal::{
+        Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode, size,
+    },
+};
 use interprocess::local_socket::{tokio::Stream, traits::tokio::Stream as _};
 use libsalus::{
-    Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SetInfo, Share, Store,
-    UnlockTimeout, agent_socket_name, decode, encode, socket_name,
+    Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SearchQuery, SetInfo, Share,
+    Store, UnlockTimeout, agent_socket_name, decode, encode, socket_name,
 };
 use salus_agent::keystore;
 use scanpw::scanpw;
@@ -62,6 +71,15 @@ impl Inter {
         // Describe the receive operation as receiving until a newline into our buffer.
         let mut msg_buf = Vec::new();
         let _msg_size = recver.read_to_end(&mut msg_buf).await?;
+        // An empty buffer means the daemon closed the connection without writing a
+        // response (e.g. it could not decode our request because it predates an
+        // action this client now sends). Surface that clearly instead of letting
+        // `decode` fail with an opaque `UnexpectedEnd`.
+        if msg_buf.is_empty() {
+            bail!(
+                "salusd closed the connection without responding; it may be out of date — restart or reinstall the daemon"
+            );
+        }
         decode::<Response>(&msg_buf)
     }
 
@@ -518,6 +536,180 @@ impl Inter {
         }
         Ok(())
     }
+
+    /// Send a single predictive-search request and return the ranked matches.
+    ///
+    /// A daemon-side error (for example, `StoreNotUnlocked`) is surfaced as an
+    /// `Err` so callers can decide how to present it.
+    async fn send_search(&self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
+        let message = Action::Search(
+            SearchQuery::builder()
+                .query(query)
+                .maybe_limit(limit)
+                .build(),
+        );
+        match self.send(message).await? {
+            Response::Matches(matches) => Ok(matches),
+            Response::Error(error) => bail!("{error}"),
+            _ => bail!("Unexpected response from salusd"),
+        }
+    }
+
+    /// Predictively search stored key names.
+    ///
+    /// With a `query`, prints the ranked matches once. Without one, opens an
+    /// interactive filter prompt.
+    pub(crate) async fn search(&self, query: Option<String>, limit: Option<usize>) -> Result<()> {
+        match query {
+            Some(query) => self.search_once(&query, limit).await,
+            None => self.search_interactive(limit).await,
+        }
+    }
+
+    /// One-shot search: print the ranked matches, reusing the `find` styling.
+    async fn search_once(&self, query: &str, limit: Option<usize>) -> Result<()> {
+        match self.send_search(query, limit).await {
+            Ok(matches) => {
+                if matches.is_empty() {
+                    let no_match_style = style(format!("No keys matched '{query}'")).red().bold();
+                    println!("{no_match_style}");
+                } else {
+                    println!("{}", "Matching keys:".green().bold());
+                    for key in matches {
+                        let key_style = style(key).with(Color::Green).bold();
+                        println!("{key_style}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error occurred while searching keys: {e}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Interactive live-filtering prompt: type to narrow, arrows to move, Enter
+    /// to print the selected key, Esc/Ctrl-C to cancel.
+    async fn search_interactive(&self, limit: Option<usize>) -> Result<()> {
+        if !stdin().is_terminal() || !stderr().is_terminal() {
+            bail!("Interactive search requires a terminal; pass a QUERY argument instead");
+        }
+
+        // Fetch the initial (unfiltered) list first. This also surfaces a locked
+        // store before we ever switch the terminal into raw mode.
+        let mut matches = match self.send_search("", limit).await {
+            Ok(matches) => matches,
+            Err(e) => {
+                eprintln!("Error occurred while searching keys: {e}");
+                return Ok(());
+            }
+        };
+
+        let mut query = String::new();
+        let mut selection = 0usize;
+
+        let guard = TermGuard::enter()?;
+        let selected = loop {
+            render_prompt(&matches, selection, &query)?;
+            match read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Esc, _) => {
+                            break None;
+                        }
+                        (KeyCode::Enter, _) => break matches.get(selection).cloned(),
+                        (KeyCode::Up, _) => selection = selection.saturating_sub(1),
+                        (KeyCode::Down, _) => {
+                            let max = matches.len().saturating_sub(1);
+                            selection = selection.saturating_add(1).min(max);
+                        }
+                        (KeyCode::Backspace, _) => {
+                            let _ = query.pop();
+                            matches = self.send_search(&query, limit).await.unwrap_or_default();
+                            selection = 0;
+                        }
+                        (KeyCode::Char(c), mods)
+                            if !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            query.push(c);
+                            matches = self.send_search(&query, limit).await.unwrap_or_default();
+                            selection = 0;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        };
+        // Restore the terminal before any stdout output.
+        drop(guard);
+
+        if let Some(key) = selected {
+            println!("{key}");
+        }
+        Ok(())
+    }
+}
+
+/// Restores the terminal (raw mode + alternate screen + cursor) on scope exit.
+///
+/// The no-panic rule means cleanup cannot rely on unwinding, so a guard
+/// guarantees the terminal is returned to a sane state even on an early return
+/// or error.
+struct TermGuard;
+
+impl TermGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        queue!(stderr(), EnterAlternateScreen, Hide)?;
+        stderr().flush()?;
+        Ok(TermGuard)
+    }
+}
+
+impl Drop for TermGuard {
+    fn drop(&mut self) {
+        // Best-effort restore; nothing actionable if these fail during teardown.
+        drop(queue!(stderr(), Show, LeaveAlternateScreen));
+        drop(stderr().flush());
+        drop(disable_raw_mode());
+    }
+}
+
+/// Draw the interactive search prompt (query line + ranked candidate list) to
+/// the alternate screen on stderr, keeping the selected row visible.
+fn render_prompt(matches: &[String], selection: usize, query: &str) -> Result<()> {
+    let mut out = stderr();
+    let (_, rows) = size().unwrap_or((80, 24));
+    // Reserve one row for the prompt line and one for breathing room.
+    let visible = usize::from(rows).saturating_sub(2).max(1);
+    let start = if selection >= visible {
+        selection.saturating_sub(visible).saturating_add(1)
+    } else {
+        0
+    };
+
+    queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    let header = style(format!("search> {query}")).with(Color::Cyan).bold();
+    queue!(out, Print(format!("{header}\r\n")))?;
+
+    if matches.is_empty() {
+        let empty = style("  (no matching keys)").with(Color::DarkGrey);
+        queue!(out, Print(format!("{empty}\r\n")))?;
+    } else {
+        for (idx, key) in matches.iter().enumerate().skip(start).take(visible) {
+            let line = if idx == selection {
+                style(format!("> {key}"))
+                    .with(Color::Black)
+                    .on(Color::Green)
+            } else {
+                style(format!("  {key}")).with(Color::Green)
+            };
+            queue!(out, Print(format!("{line}\r\n")))?;
+        }
+    }
+    out.flush()?;
+    Ok(())
 }
 
 /// Remove a named enrolled set, or every set when `all` is set.
@@ -640,9 +832,92 @@ fn parse_set_choice(line: &str, len: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use libsalus::{MAX_UNLOCK_SECONDS, UnlockTimeout};
+    use std::{
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
-    use super::{parse_set_choice, parse_unlock_timeout};
+    use anyhow::Result;
+    use interprocess::local_socket::{
+        GenericFilePath, ListenerOptions, ToFsName,
+        traits::tokio::{Listener, Stream as _},
+    };
+    use libsalus::{
+        Action, AgentAction, AgentResponse, MAX_UNLOCK_SECONDS, Response, SetInfo, Shares,
+        UnlockTimeout, decode, encode,
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        task::JoinHandle,
+    };
+
+    use super::{Inter, parse_set_choice, parse_unlock_timeout, render_prompt};
+
+    /// Allocate a unique filesystem socket path so parallel tests never collide.
+    fn unique_socket_path(tag: &str) -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("salus-test-{}-{tag}-{n}.sock", std::process::id()))
+    }
+
+    /// Build an `Inter` pointed at the given daemon socket path. The agent socket
+    /// is pointed at a path with no listener so agent probes fail fast.
+    fn inter_for(path: &Path) -> Inter {
+        Inter::builder()
+            .name(path.to_string_lossy().into_owned())
+            .agent_name(unique_socket_path("noagent").to_string_lossy().into_owned())
+            .build()
+    }
+
+    /// Stand up a mock daemon that accepts one connection per queued response,
+    /// reads the incoming `Action`, and writes back the canned `Response`. The
+    /// returned handle yields the `Action`s the client actually sent.
+    fn spawn_daemon_mock(
+        path: &Path,
+        responses: Vec<Response>,
+    ) -> Result<JoinHandle<Result<Vec<Action>>>> {
+        let name = path.to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        Ok(tokio::spawn(async move {
+            let mut received = Vec::new();
+            for response in responses {
+                let conn = listener.accept().await?;
+                let (mut recver, mut sender) = conn.split();
+                let mut buf = Vec::new();
+                let _n = recver.read_to_end(&mut buf).await?;
+                received.push(decode::<Action>(&buf)?);
+                let bytes = encode(response)?;
+                sender.write_all(&bytes).await?;
+                sender.flush().await?;
+                drop(sender);
+            }
+            Ok(received)
+        }))
+    }
+
+    /// Like [`spawn_daemon_mock`] but speaks the `salus-agent` protocol.
+    fn spawn_agent_mock(
+        path: &Path,
+        responses: Vec<AgentResponse>,
+    ) -> Result<JoinHandle<Result<Vec<AgentAction>>>> {
+        let name = path.to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        Ok(tokio::spawn(async move {
+            let mut received = Vec::new();
+            for response in responses {
+                let conn = listener.accept().await?;
+                let (mut recver, mut sender) = conn.split();
+                let mut buf = Vec::new();
+                let _n = recver.read_to_end(&mut buf).await?;
+                received.push(decode::<AgentAction>(&buf)?);
+                let bytes = encode(response)?;
+                sender.write_all(&bytes).await?;
+                sender.flush().await?;
+                drop(sender);
+            }
+            Ok(received)
+        }))
+    }
 
     #[test]
     fn set_choice_valid_is_zero_based() {
@@ -688,5 +963,276 @@ mod test {
     #[test]
     fn garbage_falls_back_to_default() {
         assert_eq!(parse_unlock_timeout(Some("abc")), UnlockTimeout::Default);
+    }
+
+    #[tokio::test]
+    async fn send_round_trips_action_and_response() -> Result<()> {
+        let path = unique_socket_path("send");
+        let handle = spawn_daemon_mock(&path, vec![Response::Success])?;
+        let inter = inter_for(&path);
+
+        assert!(matches!(inter.send(Action::Lock).await?, Response::Success));
+
+        let received = handle.await??;
+        assert!(matches!(received.as_slice(), [Action::Lock]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_reports_empty_response_clearly() -> Result<()> {
+        // Simulate a daemon that closes the connection without writing a
+        // response (e.g. an older daemon that could not decode the action). The
+        // client must surface a clear error, not an opaque bincode `UnexpectedEnd`.
+        let path = unique_socket_path("send-empty");
+        let name = path.as_path().to_fs_name::<GenericFilePath>()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
+        let handle = tokio::spawn(async move {
+            let conn = listener.accept().await?;
+            let (mut recver, sender) = conn.split();
+            let mut buf = Vec::new();
+            let _n = recver.read_to_end(&mut buf).await?;
+            drop(sender); // close without responding
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let result = inter_for(&path).send(Action::Lock).await;
+        assert!(result.is_err(), "empty response should be an error");
+        if let Err(e) = result {
+            assert!(e.to_string().contains("closed the connection"));
+        }
+
+        handle.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shares_handles_every_response_arm() -> Result<()> {
+        for response in [
+            Response::Shares(Shares::builder().shares(vec!["s1".to_string()]).build()),
+            Response::AlreadyInitialiazed,
+            Response::Error("boom".to_string()),
+            Response::Success, // unexpected arm
+        ] {
+            let path = unique_socket_path("shares");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).shares(5, 3).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lock_handles_success_and_error() -> Result<()> {
+        for response in [Response::Success, Response::Error("nope".to_string())] {
+            let path = unique_socket_path("lock");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).lock().await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn find_handles_matches_and_error() -> Result<()> {
+        for response in [
+            Response::Matches(vec!["aws-prod".to_string()]),
+            Response::Matches(vec![]),
+            Response::Error("bad regex".to_string()),
+        ] {
+            let path = unique_socket_path("find");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).find("aws.*".to_string()).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_handles_every_response_arm() -> Result<()> {
+        for response in [
+            Response::Value(Some(b"plain".to_vec())),
+            Response::Value(Some(vec![0xff, 0xfe, 0x00])), // non-UTF-8
+            Response::Value(None),
+            Response::KeyNotFound,
+            Response::Error("read failed".to_string()),
+        ] {
+            let path = unique_socket_path("read");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).read("k".to_string()).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_success_and_error() -> Result<()> {
+        for response in [Response::Success, Response::Error("disk full".to_string())] {
+            let path = unique_socket_path("store");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path)
+                .store("k".to_string(), "v".to_string(), false)
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_key_exists_refuses_without_terminal() -> Result<()> {
+        // Under `cargo test` stdin is not a terminal, so a `KeyExists` response
+        // takes the non-interactive "refuse to overwrite" branch and makes no
+        // second request.
+        let path = unique_socket_path("store-exists");
+        let handle = spawn_daemon_mock(&path, vec![Response::KeyExists])?;
+        inter_for(&path)
+            .store("k".to_string(), "v".to_string(), false)
+            .await?;
+        let received = handle.await??;
+        assert_eq!(received.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_with_force_handles_arms() -> Result<()> {
+        for response in [
+            Response::Success,
+            Response::KeyNotFound,
+            Response::Error("locked".to_string()),
+        ] {
+            let path = unique_socket_path("delete");
+            let _handle = spawn_daemon_mock(&path, vec![response])?;
+            inter_for(&path).delete("k".to_string(), true).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_without_force_refuses_without_terminal() -> Result<()> {
+        // Non-terminal stdin + no `--force` means the delete is refused before any
+        // request is sent, so no mock daemon is needed.
+        let path = unique_socket_path("delete-refuse");
+        inter_for(&path).delete("k".to_string(), false).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_search_surfaces_matches_and_errors() -> Result<()> {
+        let path = unique_socket_path("search-ok");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Matches(vec!["aws".to_string()])])?;
+        let matches = inter_for(&path).send_search("aws", None).await?;
+        assert_eq!(matches, vec!["aws".to_string()]);
+
+        let path = unique_socket_path("search-err");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Error("locked".to_string())])?;
+        assert!(inter_for(&path).send_search("aws", None).await.is_err());
+
+        let path = unique_socket_path("search-unexpected");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Success])?;
+        assert!(inter_for(&path).send_search("aws", None).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_once_prints_matches_and_empty() -> Result<()> {
+        let path = unique_socket_path("search-once");
+        let _handle =
+            spawn_daemon_mock(&path, vec![Response::Matches(vec!["github".to_string()])])?;
+        inter_for(&path)
+            .search(Some("git".to_string()), Some(10))
+            .await?;
+
+        let path = unique_socket_path("search-once-empty");
+        let _handle = spawn_daemon_mock(&path, vec![Response::Matches(vec![])])?;
+        inter_for(&path)
+            .search(Some("zzz".to_string()), None)
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agent_send_round_trips() -> Result<()> {
+        let path = unique_socket_path("agent");
+        let handle = spawn_agent_mock(&path, vec![AgentResponse::Status { sets: vec![] }])?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(path.to_string_lossy().into_owned())
+            .build();
+
+        assert!(matches!(
+            inter.agent_send(AgentAction::Status).await?,
+            AgentResponse::Status { .. }
+        ));
+        let received = handle.await??;
+        assert!(matches!(received.as_slice(), [AgentAction::Status]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_when_agent_unreachable() -> Result<()> {
+        // `inter_for` points the agent at a socket with no listener.
+        let path = unique_socket_path("collect-unreachable");
+        let result = inter_for(&path).collect_shares_via_agent(None).await?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_when_no_sets() -> Result<()> {
+        let agent = unique_socket_path("collect-empty-agent");
+        let _handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(agent.to_string_lossy().into_owned())
+            .build();
+        assert!(inter.collect_shares_via_agent(None).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_shares_falls_back_on_unknown_set() -> Result<()> {
+        let agent = unique_socket_path("collect-unknown-agent");
+        let _handle = spawn_agent_mock(
+            &agent,
+            vec![
+                AgentResponse::Status {
+                    sets: vec![SetInfo {
+                        name: "prod".to_string(),
+                        auto_count: 2,
+                    }],
+                },
+                AgentResponse::UnknownSet,
+            ],
+        )?;
+        let inter = Inter::builder()
+            .name(
+                unique_socket_path("nodaemon")
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .agent_name(agent.to_string_lossy().into_owned())
+            .build();
+        // An explicit (missing) set name avoids the interactive set chooser.
+        assert!(
+            inter
+                .collect_shares_via_agent(Some("missing".to_string()))
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn render_prompt_handles_populated_and_empty_lists() -> Result<()> {
+        let matches = vec![
+            "aws-prod".to_string(),
+            "aws-staging".to_string(),
+            "github".to_string(),
+        ];
+        render_prompt(&matches, 1, "aws")?;
+        render_prompt(&[], 0, "zzz")?;
+        Ok(())
     }
 }

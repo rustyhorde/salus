@@ -178,10 +178,25 @@ pub(crate) enum Commands {
         force: bool,
     },
     /// Search stored keys by regular expression
+    ///
+    /// The store must be unlocked first.
     Find {
         /// The regex to match key names against
         #[arg(index = 1, value_name = "REGEX")]
         regex: String,
+    },
+    /// Predictively (fuzzy) search stored key names
+    ///
+    /// Omit QUERY to open an interactive filter prompt: type to narrow the
+    /// list, Up/Down to move, Enter to print the selected key, Esc to cancel.
+    /// The store must be unlocked first.
+    Search {
+        /// The query to fuzzy-match against key names
+        #[arg(index = 1, value_name = "QUERY")]
+        query: Option<String>,
+        /// Maximum number of results to show
+        #[arg(short, long)]
+        limit: Option<usize>,
     },
     /// Enroll a named set of shares so the agent can supply them at unlock
     Enroll {

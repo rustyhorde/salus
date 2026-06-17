@@ -14,7 +14,7 @@ use aws_lc_rs::{
     rand,
 };
 use bon::Builder;
-use libsalus::{Init, Response, Shares, SsssConfig, gen_shares, unlock_key};
+use libsalus::{Init, Response, Shares, SsssConfig, fuzzy_rank, gen_shares, unlock_key};
 use redb::{Database, ReadableDatabase, ReadableTable};
 use regex::Regex;
 use tracing::{error, info, trace};
@@ -362,6 +362,11 @@ impl ShareStore {
     }
 
     pub(crate) fn find(&self, regex: &str) -> Result<Response> {
+        // Key names are only revealed to an unlocked client: the less exposed
+        // while locked, the better.
+        if self.key.is_none() {
+            return Err(Error::StoreNotUnlocked.into());
+        }
         let mut matches = vec![];
         trace!("Finding keys matching regex: {regex}");
         let re = Regex::new(regex).with_context(|| Error::InvalidRegex)?;
@@ -379,6 +384,32 @@ impl ShareStore {
             Ok(())
         })?;
         Ok(Response::Matches(matches))
+    }
+
+    /// Predictively (fuzzy) search key names, returning ranked matches.
+    ///
+    /// Like [`find`](Self::find), this requires the store to be unlocked so key
+    /// names are never enumerable without the key. The `CHECK_KEY` sentinel row
+    /// is internal bookkeeping and is excluded from the results.
+    pub(crate) fn search(&self, query: &str, limit: Option<usize>) -> Result<Response> {
+        if self.key.is_none() {
+            return Err(Error::StoreNotUnlocked.into());
+        }
+        trace!("Searching keys for query: {query}");
+        let mut keys = vec![];
+        unlock_redb(&self.redb, |db| -> Result<()> {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(SALUS_VAL_TABLE_DEF)?;
+            for iter_res in table.iter()? {
+                let (key_bytes, _) = iter_res.with_context(|| Error::TableIterRead)?;
+                let key_str = key_bytes.value();
+                if key_str != CHECK_KEY_KEY {
+                    keys.push(key_str.clone());
+                }
+            }
+            Ok(())
+        })?;
+        Ok(Response::Matches(fuzzy_rank(query, keys, limit)))
     }
 }
 
@@ -505,6 +536,88 @@ mod test {
     fn delete_before_unlock_errors() -> Result<()> {
         let store = temp_store()?;
         assert!(store.delete("alpha").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn find_and_search_before_unlock_error() -> Result<()> {
+        // Key names must not be enumerable without the key.
+        let store = temp_store()?;
+        assert!(store.find(".*").is_err());
+        assert!(store.search("", None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn search_returns_ranked_matches() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+        for key in ["aws-prod-key", "aws-staging", "github-token"] {
+            assert!(matches!(
+                store.store(key, b"v".to_vec(), false)?,
+                Response::Success
+            ));
+        }
+
+        // A fuzzy query returns only the relevant keys, and never the internal
+        // CHECK_KEY sentinel.
+        match store.search("aws", None)? {
+            Response::Matches(matches) => {
+                assert!(matches.iter().any(|k| k == "aws-prod-key"));
+                assert!(matches.iter().any(|k| k == "aws-staging"));
+                assert!(!matches.iter().any(|k| k == "github-token"));
+                assert!(!matches.iter().any(|k| k == "CHECK_KEY"));
+            }
+            other => bail!("expected matches, got {other:?}"),
+        }
+
+        // An empty query lists every stored key (sorted), still excluding the
+        // sentinel.
+        match store.search("", None)? {
+            Response::Matches(matches) => {
+                assert_eq!(matches, vec!["aws-prod-key", "aws-staging", "github-token"]);
+            }
+            other => bail!("expected matches, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn find_returns_regex_matches() -> Result<()> {
+        let mut store = temp_store()?;
+        let shares = gen_and_collect(&mut store)?;
+        for share in shares.iter().take(3) {
+            store.add_share(share.clone());
+        }
+        assert!(matches!(store.unlock()?, Response::Success));
+        for key in ["aws-prod-key", "aws-staging", "github-token"] {
+            assert!(matches!(
+                store.store(key, b"v".to_vec(), false)?,
+                Response::Success
+            ));
+        }
+
+        // A regex returns only the matching keys, and never the internal
+        // CHECK_KEY sentinel.
+        match store.find("aws.*")? {
+            Response::Matches(matches) => {
+                assert!(matches.iter().any(|k| k == "aws-prod-key"));
+                assert!(matches.iter().any(|k| k == "aws-staging"));
+                assert!(!matches.iter().any(|k| k == "github-token"));
+                assert!(!matches.iter().any(|k| k == "CHECK_KEY"));
+            }
+            other => bail!("expected matches, got {other:?}"),
+        }
+
+        // A non-matching regex returns an empty match set.
+        match store.find("zzz-no-such-key")? {
+            Response::Matches(matches) => assert!(matches.is_empty()),
+            other => bail!("expected empty matches, got {other:?}"),
+        }
         Ok(())
     }
 

@@ -256,6 +256,7 @@ use interprocess::local_socket::ToFsName;
 
 mod key;
 mod message;
+mod search;
 
 pub use crate::key::gen_shares;
 pub use crate::key::unlock_key;
@@ -264,6 +265,7 @@ pub use crate::message::Init;
 pub use crate::message::MAX_MESSAGE_SIZE;
 pub use crate::message::MAX_UNLOCK_SECONDS;
 pub use crate::message::Response;
+pub use crate::message::SearchQuery;
 pub use crate::message::Share;
 pub use crate::message::Shares;
 pub use crate::message::Store;
@@ -273,6 +275,7 @@ pub use crate::message::agent::AgentResponse;
 pub use crate::message::agent::SetInfo;
 pub use crate::message::decode;
 pub use crate::message::encode;
+pub use crate::search::fuzzy_rank;
 use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::NameType;
 use interprocess::local_socket::ToNsName;

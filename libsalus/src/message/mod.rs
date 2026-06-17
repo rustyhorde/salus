@@ -128,6 +128,33 @@ impl Store {
     }
 }
 
+/// A predictive key-name search request.
+///
+/// The daemon fuzzy-matches `query` against the stored key names and returns the
+/// ranked results (best match first). An empty `query` lists every key name. The
+/// store must be unlocked.
+#[derive(Builder, Clone, Debug, Decode, Encode)]
+pub struct SearchQuery {
+    #[builder(into)]
+    query: String,
+    /// Maximum number of results to return; `None` returns every match.
+    limit: Option<usize>,
+}
+
+impl SearchQuery {
+    /// Get the query string.
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// Get the result limit, if any.
+    #[must_use]
+    pub fn limit(&self) -> Option<usize> {
+        self.limit
+    }
+}
+
 /// How long the daemon should keep the reconstructed key in memory after a
 /// successful unlock.
 #[derive(Clone, Copy, Debug, Decode, Default, Encode, Eq, PartialEq)]
@@ -167,6 +194,8 @@ pub enum Action {
     GetThreshold,
     /// Find a key
     FindKey(String),
+    /// Predictively (fuzzy) search key names
+    Search(SearchQuery),
 }
 
 /// A response from the daemon
@@ -192,4 +221,52 @@ pub enum Response {
     KeyExists,
     /// The keys that matched the regex
     Matches(Vec<String>),
+}
+
+#[cfg(test)]
+mod test {
+    use anyhow::{Result, bail};
+
+    use super::{Action, SearchQuery, UnlockTimeout, decode, encode};
+
+    #[test]
+    fn search_query_accessors() {
+        let query = SearchQuery::builder().query("aws").limit(5).build();
+        assert_eq!(query.query(), "aws");
+        assert_eq!(query.limit(), Some(5));
+
+        let no_limit = SearchQuery::builder().query("github").build();
+        assert_eq!(no_limit.query(), "github");
+        assert_eq!(no_limit.limit(), None);
+    }
+
+    #[test]
+    fn search_action_round_trips() -> Result<()> {
+        let action = Action::Search(SearchQuery::builder().query("aws").limit(3).build());
+        let bytes = encode(action)?;
+        match decode::<Action>(&bytes)? {
+            Action::Search(query) => {
+                assert_eq!(query.query(), "aws");
+                assert_eq!(query.limit(), Some(3));
+            }
+            other => bail!("expected Action::Search, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unlock_timeout_variants_round_trip() -> Result<()> {
+        for timeout in [
+            UnlockTimeout::Default,
+            UnlockTimeout::Seconds(42),
+            UnlockTimeout::Forever,
+        ] {
+            let bytes = encode(Action::Unlock(timeout))?;
+            match decode::<Action>(&bytes)? {
+                Action::Unlock(decoded) => assert_eq!(decoded, timeout),
+                other => bail!("expected Action::Unlock, got {other:?}"),
+            }
+        }
+        Ok(())
+    }
 }
