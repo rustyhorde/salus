@@ -34,7 +34,7 @@ cargo run -p xtask -- dist salusc   # completions/man page -> dist/salusc
    - `salusc shares` — first-time init; generates and prints the shares **once** (record them).
    - `salusc unlock` — prompts for `threshold` shares (default 3) and reconstructs the key in the daemon's memory. The key auto-clears after `key_timeout` seconds (default 20), after which you must unlock again.
    - `salusc store -k <key> -v <value>` / `salusc read -k <key>` / `salusc find <regex>`.
-   - `salusc search <query>` — predictive (fuzzy) key-name search; ranked one-shot output. `salusc search` with no query opens an interactive live-filter prompt (type to narrow, arrows to move, Enter prints the selected key, Esc cancels). Server-side ranking lives in `libsalus::fuzzy_rank`.
+   - `salusc search <query>` — predictive (fuzzy) key-name search; ranked one-shot output. `salusc search` with no query opens an interactive live-filter prompt (type to narrow, arrows to move, Enter prints the selected key's value, Esc cancels). Server-side ranking lives in `libsalus::fuzzy_rank`.
 
 The daemon must be unlocked before `store`/`read`/`find`/`search` succeed (otherwise `StoreNotUnlocked`) — key names are only revealed to an unlocked client.
 

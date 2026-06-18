@@ -509,28 +509,19 @@ impl Inter {
                 if let Some(bytes) = value {
                     match String::from_utf8(bytes) {
                         Ok(val) => {
-                            let value_style = style(val).with(Color::Green).bold();
-                            println!("{}", "Value: ".green());
-                            println!("{value_style}");
+                            println!("{val}");
                         }
                         Err(e) => {
                             let len = e.as_bytes().len();
-                            let binary_style = style(format!(
-                                "Value for '{key}' is {len} bytes of non-UTF-8 binary data"
-                            ))
-                            .with(Color::Yellow)
-                            .bold();
-                            println!("{binary_style}");
+                            eprintln!("Value for '{key}' is {len} bytes of non-UTF-8 binary data");
                         }
                     }
                 } else {
-                    let not_found_style = style(format!("No value found for '{key}'")).red().bold();
-                    println!("{not_found_style}");
+                    eprintln!("No value found for '{key}'");
                 }
             }
             Response::KeyNotFound => {
-                let not_found_style = style(format!("Key '{key}' not found")).red().bold();
-                println!("{not_found_style}");
+                eprintln!("Key '{key}' not found");
             }
             Response::Error(error) => {
                 eprintln!("Error occurred while reading value: {error}");
@@ -591,15 +582,10 @@ impl Inter {
         match self.send(message).await? {
             Response::Matches(matches) => {
                 if matches.is_empty() {
-                    let no_match_style = style(format!("No keys matched regex '{regex}'"))
-                        .red()
-                        .bold();
-                    println!("{no_match_style}");
+                    eprintln!("No keys matched regex '{regex}'");
                 } else {
-                    println!("{}", "Matching keys:".green().bold());
                     for key in matches {
-                        let key_style = style(key).with(Color::Green).bold();
-                        println!("{key_style}");
+                        println!("{key}");
                     }
                 }
             }
@@ -647,13 +633,10 @@ impl Inter {
         match self.send_search(query, limit).await {
             Ok(matches) => {
                 if matches.is_empty() {
-                    let no_match_style = style(format!("No keys matched '{query}'")).red().bold();
-                    println!("{no_match_style}");
+                    eprintln!("No keys matched '{query}'");
                 } else {
-                    println!("{}", "Matching keys:".green().bold());
                     for key in matches {
-                        let key_style = style(key).with(Color::Green).bold();
-                        println!("{key_style}");
+                        println!("{key}");
                     }
                 }
             }
@@ -665,7 +648,7 @@ impl Inter {
     }
 
     /// Interactive live-filtering prompt: type to narrow, arrows to move, Enter
-    /// to print the selected key, Esc/Ctrl-C to cancel.
+    /// to look up and print the selected key's value, Esc/Ctrl-C to cancel.
     async fn search_interactive(&self, limit: Option<usize>) -> Result<()> {
         if !stdin().is_terminal() || !stderr().is_terminal() {
             bail!("Interactive search requires a terminal; pass a QUERY argument instead");
@@ -721,7 +704,7 @@ impl Inter {
         drop(guard);
 
         if let Some(key) = selected {
-            println!("{key}");
+            self.read(key).await?;
         }
         Ok(())
     }
