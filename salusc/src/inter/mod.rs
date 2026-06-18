@@ -336,8 +336,84 @@ impl Inter {
             keystore::enroll_full(&name, &shares, &passphrase, independent_auto, force)?;
         }
 
+        // Refresh the running agent so the newly enrolled set is offered at the
+        // next unlock without waiting for an agent restart.
+        self.reload_agent().await;
         println!("{}", format!("Enrolled set '{name}'.").green().bold());
         Ok(())
+    }
+
+    /// Remove a named enrolled set, or every set when `all` is set.
+    ///
+    /// Confirms by default; pass `force` to skip the prompt. After a change, the
+    /// running agent is asked to re-read its sets so a forgotten set stops being
+    /// offered at unlock without an agent restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if neither a name nor `all` is given, or a keyring
+    /// operation fails.
+    pub(crate) async fn forget(&self, name: Option<&str>, all: bool, force: bool) -> Result<()> {
+        if !all && name.is_none() {
+            bail!("specify --name <set> to remove one set, or --all to remove every set");
+        }
+
+        // Confirm by default. A destructive forget should never proceed without
+        // an explicit yes: when stdin is not a terminal we cannot prompt, so a
+        // non-interactive forget must pass `--force` rather than be silently
+        // confirmed by piped input.
+        if !force {
+            if !stdin().is_terminal() {
+                eprintln!(
+                    "{}",
+                    "Refusing to forget without confirmation; \
+                     re-run with --force for non-interactive use"
+                        .red()
+                        .bold()
+                );
+                return Ok(());
+            }
+            let prompt = if all {
+                "Forget ALL enrolled sets? [y/N]: ".to_string()
+            } else if let Some(name) = name {
+                format!("Forget enrolled set '{name}'? [y/N]: ")
+            } else {
+                // Unreachable: the guard above rejects the no-target case.
+                "Forget enrolled set? [y/N]: ".to_string()
+            };
+            let answer = prompt_line(&prompt)?;
+            let answer = answer.trim().to_ascii_lowercase();
+            if answer != "y" && answer != "yes" {
+                println!("{}", "Aborted; nothing was forgotten.".yellow());
+                return Ok(());
+            }
+        }
+
+        if all {
+            keystore::forget_all()?;
+            self.reload_agent().await;
+            println!("{}", "Removed all enrolled sets.".green().bold());
+        } else if let Some(name) = name {
+            if keystore::forget(name)? {
+                self.reload_agent().await;
+                println!(
+                    "{}",
+                    format!("Removed enrolled set '{name}'.").green().bold()
+                );
+            } else {
+                eprintln!("{}", format!("No enrolled set named '{name}'.").yellow());
+            }
+        }
+        Ok(())
+    }
+
+    /// Ask the running agent (if any) to re-read its enrolled sets from the
+    /// keyring.
+    ///
+    /// Best-effort: an unreachable agent is fine — it loads a fresh view at its
+    /// next start — so any error is swallowed rather than surfaced.
+    async fn reload_agent(&self) {
+        let _ignored = self.agent_send(AgentAction::Reload).await;
     }
 
     pub(crate) async fn enroll_status(&self) -> Result<()> {
@@ -712,31 +788,6 @@ fn render_prompt(matches: &[String], selection: usize, query: &str) -> Result<()
     Ok(())
 }
 
-/// Remove a named enrolled set, or every set when `all` is set.
-///
-/// # Errors
-///
-/// Returns an error if neither a name nor `--all` is given, or a keyring
-/// operation fails.
-pub(crate) fn forget(name: Option<&str>, all: bool) -> Result<()> {
-    if all {
-        keystore::forget_all()?;
-        println!("{}", "Removed all enrolled sets.".green().bold());
-    } else if let Some(name) = name {
-        if keystore::forget(name)? {
-            println!(
-                "{}",
-                format!("Removed enrolled set '{name}'.").green().bold()
-            );
-        } else {
-            eprintln!("{}", format!("No enrolled set named '{name}'.").yellow());
-        }
-    } else {
-        bail!("specify --name <set> to remove one set, or --all to remove every set");
-    }
-    Ok(())
-}
-
 /// Prompt twice (no echo) for a passphrase and confirm they match.
 fn prompt_passphrase_confirm() -> Result<String> {
     loop {
@@ -850,6 +901,8 @@ mod test {
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinHandle,
     };
+
+    use salus_agent::{keystore, test_keyring::guard};
 
     use super::{Inter, parse_set_choice, parse_unlock_timeout, render_prompt};
 
@@ -1221,6 +1274,117 @@ mod test {
                 .await?
                 .is_none()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forget_requires_target() -> Result<()> {
+        // Neither a name nor --all: rejected before touching the keyring or agent.
+        let inter = inter_for(&unique_socket_path("forget-none"));
+        assert!(inter.forget(None, false, false).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forget_without_tty_refuses() -> Result<()> {
+        // Under `cargo test` stdin is not a terminal, so a non-forced forget
+        // bails out via the confirmation guard without removing anything and
+        // without contacting the agent (`inter_for` points it at a dead socket).
+        let inter = inter_for(&unique_socket_path("forget-notty"));
+        inter.forget(Some("anything"), false, false).await?;
+        Ok(())
+    }
+
+    // The keyring-touching `forget` tests are sync `#[test]`s that hold the
+    // serialization `guard()` and drive the async client via `block_on`. Holding
+    // the guard across a blocking `block_on` (rather than across an `.await` in
+    // an `async fn`) keeps the in-memory keyring mock stable for the whole test
+    // without tripping `clippy::await_holding_lock` / the `must_not_suspend` lint.
+    fn block_on<F: Future>(fut: F) -> Result<F::Output> {
+        Ok(tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(fut))
+    }
+
+    #[test]
+    fn forget_named_with_force_removes_and_reloads() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        assert_eq!(keystore::list_sets()?.len(), 1);
+
+        let agent = unique_socket_path("forget-agent");
+        let received = block_on(async {
+            let handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+            let inter = Inter::builder()
+                .name(
+                    unique_socket_path("nodaemon")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+                .agent_name(agent.to_string_lossy().into_owned())
+                .build();
+            inter.forget(Some("alpha"), false, true).await?;
+            // The running agent was asked to re-read its sets.
+            let actions = handle.await??;
+            anyhow::Ok(actions)
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
+        assert!(matches!(received.as_slice(), [AgentAction::Reload]));
+        Ok(())
+    }
+
+    #[test]
+    fn forget_all_with_force_removes_every_set() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        keystore::enroll_final_only("beta", "final", "secret", false)?;
+        assert_eq!(keystore::list_sets()?.len(), 2);
+
+        let agent = unique_socket_path("forget-all-agent");
+        let received = block_on(async {
+            let handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+            let inter = Inter::builder()
+                .name(
+                    unique_socket_path("nodaemon")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+                .agent_name(agent.to_string_lossy().into_owned())
+                .build();
+            inter.forget(None, true, true).await?;
+            let actions = handle.await??;
+            anyhow::Ok(actions)
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
+        assert!(matches!(received.as_slice(), [AgentAction::Reload]));
+        Ok(())
+    }
+
+    #[test]
+    fn forget_unknown_with_force_is_noop() -> Result<()> {
+        let _g = guard();
+        // No sets enrolled: forgetting an unknown name removes nothing and never
+        // contacts the agent. `inter_for` points the agent at a dead socket, so
+        // a stray reload attempt would surface as an error rather than hang.
+        block_on(async {
+            inter_for(&unique_socket_path("forget-unknown"))
+                .forget(Some("ghost"), false, true)
+                .await
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
         Ok(())
     }
 

@@ -212,6 +212,8 @@ pub(crate) enum Commands {
         independent_auto: bool,
     },
     /// Remove a named enrolled set, or every set with --all
+    ///
+    /// Prompts for confirmation unless `--force` is given.
     Forget {
         /// The name of the set to remove
         #[arg(short, long, conflicts_with = "all")]
@@ -219,6 +221,9 @@ pub(crate) enum Commands {
         /// Remove every enrolled set
         #[arg(long)]
         all: bool,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        force: bool,
     },
     /// List the enrolled sets and whether the agent is reachable
     EnrollStatus,

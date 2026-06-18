@@ -34,7 +34,7 @@ fn serial() -> &'static Mutex<()> {
 
 /// Install a fresh in-memory keyring (clearing any prior contents) and
 /// serialize keyring-touching tests for the lifetime of the returned guard.
-pub(crate) fn guard() -> MutexGuard<'static, ()> {
+pub fn guard() -> MutexGuard<'static, ()> {
     let lock = serial()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

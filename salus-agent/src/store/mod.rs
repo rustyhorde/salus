@@ -83,6 +83,20 @@ impl AgentState {
         Ok(Self { sets })
     }
 
+    /// Re-read every enrolled set from the keyring, replacing the in-memory view.
+    ///
+    /// Used after the client enrolls or forgets a set. This drops any cached
+    /// unsealed final shares for surviving sets — an accepted minor cost: the
+    /// passphrase is simply re-entered once after a reload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry or any automatic share cannot be read.
+    pub(crate) fn reload(&mut self) -> Result<()> {
+        *self = Self::load()?;
+        Ok(())
+    }
+
     /// Whether no sets are enrolled.
     pub(crate) fn is_empty(&self) -> bool {
         self.sets.is_empty()
@@ -326,6 +340,36 @@ mod test {
             UnsealResult::Share { arm_timer, .. } => assert!(arm_timer.is_none()),
             _ => bail!("expected a cached share result"),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn reload_reflects_forgotten_sets() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        keystore::enroll_final_only("beta", "final", "secret", false)?;
+
+        let mut st = AgentState::load()?;
+        assert_eq!(st.status().len(), 2);
+
+        // Forget one set in the keyring, then reload: the in-memory view follows.
+        assert!(keystore::forget("alpha")?);
+        st.reload()?;
+        let status = st.status();
+        assert_eq!(status.len(), 1);
+        assert_eq!(
+            status
+                .first()
+                .context("expected one set after reload")?
+                .name,
+            "beta"
+        );
         Ok(())
     }
 
