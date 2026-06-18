@@ -188,7 +188,8 @@ pub(crate) enum Commands {
     /// Predictively (fuzzy) search stored key names
     ///
     /// Omit QUERY to open an interactive filter prompt: type to narrow the
-    /// list, Up/Down to move, Enter to print the selected key, Esc to cancel.
+    /// list, Up/Down to move, Enter to print the selected key's value, Esc to
+    /// cancel.
     /// The store must be unlocked first.
     Search {
         /// The query to fuzzy-match against key names
