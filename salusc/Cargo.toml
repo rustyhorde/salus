@@ -11,7 +11,7 @@ name = "salusc"
 readme = "../README.md"
 repository = "https://github.com/rustyhorde/salus"
 rust-version = "1.91.1"
-version = "0.2.0"
+version = "0.2.1"
 
 [features]
 # Propagate to salus-agent so that coverage/unstable-gated lints stay consistent
@@ -35,9 +35,9 @@ config = { workspace = true }
 crossterm = "0.29.0"
 dirs2 = { workspace = true }
 interprocess = { workspace = true }
-libsalus = { version = "0.2.0", path = "../libsalus" }
+libsalus = { version = "0.2.1", path = "../libsalus" }
 rand = { workspace = true }
-salus-agent = { version = "0.2.0", path = "../salus-agent" }
+salus-agent = { version = "0.2.1", path = "../salus-agent" }
 scanpw = "1.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { workspace = true, features = ["io-std"] }
