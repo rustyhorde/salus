@@ -44,5 +44,10 @@ tokio = { workspace = true, features = ["io-std"] }
 tracing = { workspace = true }
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# Pulls in `salus_agent::test_keyring::guard()` so tests can install the
+# in-memory keyring mock that the keystore-touching client paths exercise.
+salus-agent = { version = "0.2.1", path = "../salus-agent", features = ["test-support"] }
+
 [build-dependencies]
 rustversion = { workspace = true }

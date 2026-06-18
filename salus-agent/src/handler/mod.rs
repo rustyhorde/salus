@@ -247,4 +247,32 @@ mod test {
         assert!(matches!(resp, AgentResponse::Status { .. }));
         Ok(())
     }
+
+    // Sync `#[test]`: the `Reload` arm re-reads the keyring *during* `handle()`,
+    // so the serialization `guard()` must stay live across that work. Driving the
+    // handler via `block_on` keeps the guard across a blocking call rather than an
+    // `.await`, so it never trips `clippy::await_holding_lock` / `must_not_suspend`.
+    #[test]
+    fn reload_reflects_forgotten_sets() -> Result<()> {
+        let _g = guard();
+        enroll_alpha()?;
+        keystore::enroll_final_only("beta", "final", "secret", false)?;
+        let state = AgentState::load()?;
+        // Two sets before any change.
+        assert_eq!(state.status().len(), 2);
+
+        // Forget one set in the keyring, then drive Reload through the handler:
+        // the returned status reflects only the surviving set.
+        assert!(keystore::forget("alpha")?);
+        let resp = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(run(state, 0, AgentAction::Reload))?;
+        assert!(matches!(
+            resp,
+            AgentResponse::Status { sets }
+                if sets.len() == 1 && sets.first().is_some_and(|s| s.name == "beta")
+        ));
+        Ok(())
+    }
 }

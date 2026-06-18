@@ -902,6 +902,8 @@ mod test {
         task::JoinHandle,
     };
 
+    use salus_agent::{keystore, test_keyring::guard};
+
     use super::{Inter, parse_set_choice, parse_unlock_timeout, render_prompt};
 
     /// Allocate a unique filesystem socket path so parallel tests never collide.
@@ -1272,6 +1274,117 @@ mod test {
                 .await?
                 .is_none()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forget_requires_target() -> Result<()> {
+        // Neither a name nor --all: rejected before touching the keyring or agent.
+        let inter = inter_for(&unique_socket_path("forget-none"));
+        assert!(inter.forget(None, false, false).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forget_without_tty_refuses() -> Result<()> {
+        // Under `cargo test` stdin is not a terminal, so a non-forced forget
+        // bails out via the confirmation guard without removing anything and
+        // without contacting the agent (`inter_for` points it at a dead socket).
+        let inter = inter_for(&unique_socket_path("forget-notty"));
+        inter.forget(Some("anything"), false, false).await?;
+        Ok(())
+    }
+
+    // The keyring-touching `forget` tests are sync `#[test]`s that hold the
+    // serialization `guard()` and drive the async client via `block_on`. Holding
+    // the guard across a blocking `block_on` (rather than across an `.await` in
+    // an `async fn`) keeps the in-memory keyring mock stable for the whole test
+    // without tripping `clippy::await_holding_lock` / the `must_not_suspend` lint.
+    fn block_on<F: Future>(fut: F) -> Result<F::Output> {
+        Ok(tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(fut))
+    }
+
+    #[test]
+    fn forget_named_with_force_removes_and_reloads() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        assert_eq!(keystore::list_sets()?.len(), 1);
+
+        let agent = unique_socket_path("forget-agent");
+        let received = block_on(async {
+            let handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+            let inter = Inter::builder()
+                .name(
+                    unique_socket_path("nodaemon")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+                .agent_name(agent.to_string_lossy().into_owned())
+                .build();
+            inter.forget(Some("alpha"), false, true).await?;
+            // The running agent was asked to re-read its sets.
+            let actions = handle.await??;
+            anyhow::Ok(actions)
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
+        assert!(matches!(received.as_slice(), [AgentAction::Reload]));
+        Ok(())
+    }
+
+    #[test]
+    fn forget_all_with_force_removes_every_set() -> Result<()> {
+        let _g = guard();
+        keystore::enroll_full(
+            "alpha",
+            &["s0".into(), "s1".into(), "final".into()],
+            "pass",
+            false,
+            false,
+        )?;
+        keystore::enroll_final_only("beta", "final", "secret", false)?;
+        assert_eq!(keystore::list_sets()?.len(), 2);
+
+        let agent = unique_socket_path("forget-all-agent");
+        let received = block_on(async {
+            let handle = spawn_agent_mock(&agent, vec![AgentResponse::Status { sets: vec![] }])?;
+            let inter = Inter::builder()
+                .name(
+                    unique_socket_path("nodaemon")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+                .agent_name(agent.to_string_lossy().into_owned())
+                .build();
+            inter.forget(None, true, true).await?;
+            let actions = handle.await??;
+            anyhow::Ok(actions)
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
+        assert!(matches!(received.as_slice(), [AgentAction::Reload]));
+        Ok(())
+    }
+
+    #[test]
+    fn forget_unknown_with_force_is_noop() -> Result<()> {
+        let _g = guard();
+        // No sets enrolled: forgetting an unknown name removes nothing and never
+        // contacts the agent. `inter_for` points the agent at a dead socket, so
+        // a stray reload attempt would surface as an error rather than hang.
+        block_on(async {
+            inter_for(&unique_socket_path("forget-unknown"))
+                .forget(Some("ghost"), false, true)
+                .await
+        })??;
+        assert!(keystore::list_sets()?.is_empty());
         Ok(())
     }
 

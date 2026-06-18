@@ -25,6 +25,9 @@ path = "src/main.rs"
 # Exposes a small `pub` surface (`keystore::decode_registry`) for the workspace
 # fuzz crate to drive the keyring registry deserialization. Not for normal use.
 fuzzing = []
+# Exposes `test_keyring::guard()` (an in-memory keyring mock + serialization
+# guard) so sibling crates can install the mock in their own tests. Test-only.
+test-support = ["dep:keyring-core"]
 unstable = []
 
 [dependencies]
@@ -39,6 +42,7 @@ dirs2 = { workspace = true }
 getset = { workspace = true }
 interprocess = { workspace = true }
 keyring = { workspace = true }
+keyring-core = { workspace = true, optional = true }
 libsalus = { version = "0.2.1", path = "../libsalus" }
 serde = { workspace = true }
 thiserror = { workspace = true }
