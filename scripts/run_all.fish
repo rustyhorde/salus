@@ -11,10 +11,10 @@
 set run_tests true
 set run_coverage true
 set run_docs true
-set run_fuzz true
-set run_install true
-set run_musl true
-set unstable false
+set run_fuzz false
+set run_install false
+set run_musl false
+set musl_unstable false
 set run_clean false
 
 for arg in $argv
@@ -28,10 +28,10 @@ for arg in $argv
             echo "  --no-test      Skip nextest and all coverage steps"
             echo "  --no-coverage  Skip coverage steps only (lcov + html reports)"
             echo "  --no-docs      Skip the documentation step"
-            echo "  --no-fuzz      Skip the cargo fuzz steps"
-            echo "  --no-install   Skip the cargo install step"
-            echo "  --no-musl      Skip the MUSL Docker build step"
-            echo "  --unstable     Build the fuzz crate and MUSL binaries with --features unstable"
+            echo "  --fuzz         Run the cargo fuzz steps"
+            echo "  --install      Run the cargo install step"
+            echo "  --musl         Run the MUSL Docker build step (stable)"
+            echo "  --unstable     Run the MUSL Docker build step with the unstable feature"
             echo "  --clean        Run cargo clean after all steps complete"
             echo "  --help, -h     Show this help message"
             echo ""
@@ -42,14 +42,14 @@ for arg in $argv
             echo "  4.  cargo matrix build"
             echo "  5.  cargo matrix nextest run                        (skipped with --no-test)"
             echo "  6.  cargo test -p libsalus --doc                    (skipped with --no-test)"
-            echo "  7.  cargo test --manifest-path fuzz/Cargo.toml      (skipped with --no-test; +--features unstable with --unstable)"
+            echo "  7.  cargo matrix nextest run (fuzz crate)           (skipped with --no-test)"
             echo "  8.  cargo doc -p libsalus                           (skipped with --no-docs)"
             echo "  9.  cargo matrix -F unstable llvm-cov nextest ...   (skipped with --no-test or --no-coverage)"
             echo "  10. cargo llvm-cov report --lcov ...                (skipped with --no-test or --no-coverage)"
             echo "  11. cargo llvm-cov report --html                    (skipped with --no-test or --no-coverage)"
-            echo "  12. cargo fuzz run (30s each target)               (skipped with --no-fuzz)"
-            echo "  13. run_install.fish                                (skipped with --no-install)"
-            echo "  14. run_musl.fish                                   (skipped with --no-musl; --unstable passed through)"
+            echo "  12. cargo fuzz run (30s each target)               (only with --fuzz)"
+            echo "  13. run_install.fish                                (only with --install)"
+            echo "  14. run_musl.fish                                   (only with --musl or --unstable; --unstable builds unstable)"
             echo "  15. cargo clean                                     (only with --clean)"
             exit 0
         case --no-test
@@ -59,14 +59,15 @@ for arg in $argv
             set run_coverage false
         case --no-docs
             set run_docs false
-        case --no-fuzz
-            set run_fuzz false
-        case --no-install
-            set run_install false
-        case --no-musl
-            set run_musl false
+        case --fuzz
+            set run_fuzz true
+        case --install
+            set run_install true
+        case --musl
+            set run_musl true
         case --unstable
-            set unstable true
+            set run_musl true
+            set musl_unstable true
         case --clean
             set run_clean true
         case '*'
@@ -94,11 +95,9 @@ run_step cargo matrix build
 if test $run_tests = true
     run_step cargo matrix nextest run
     run_step cargo test -p libsalus --doc
-    if test $unstable = true
-        run_step cargo test --manifest-path fuzz/Cargo.toml --features unstable
-    else
-        run_step cargo test --manifest-path fuzz/Cargo.toml
-    end
+    pushd fuzz
+    run_step cargo matrix nextest run
+    popd
 end
 
 if test $run_docs = true
@@ -112,16 +111,16 @@ if test $run_coverage = true
 end
 
 if test $run_fuzz = true
-    run_step cargo +nightly fuzz run fuzz_action_decode -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_response_decode -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_unlock_key -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_store_roundtrip -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_find_regex -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_agent_action_decode -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_agent_response_decode -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_agent_unseal -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_agent_registry_decode -- -max_total_time=30
-    run_step cargo +nightly fuzz run fuzz_db_value_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_action_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_response_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_unlock_key -- -max_total_time=30
+    run_step cargo fuzz run fuzz_store_roundtrip -- -max_total_time=30
+    run_step cargo fuzz run fuzz_find_regex -- -max_total_time=30
+    run_step cargo fuzz run fuzz_agent_action_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_agent_response_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_agent_unseal -- -max_total_time=30
+    run_step cargo fuzz run fuzz_agent_registry_decode -- -max_total_time=30
+    run_step cargo fuzz run fuzz_db_value_decode -- -max_total_time=30
 end
 
 if test $run_install = true
@@ -129,7 +128,7 @@ if test $run_install = true
 end
 
 if test $run_musl = true
-    if test $unstable = true
+    if test $musl_unstable = true
         run_step (dirname (status filename))/run_musl.fish --unstable
     else
         run_step (dirname (status filename))/run_musl.fish
