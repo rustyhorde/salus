@@ -25,7 +25,7 @@ cargo run -p xtask -- dist salusd   # completions/man page/systemd unit -> dist/
 cargo run -p xtask -- dist salusc   # completions/man page -> dist/salusc
 ```
 
-**Final verification.** Always run `scripts/run_all.fish` as the final verification step before considering a change complete. (By default `run_all.fish` runs the fast, Docker-free code check — fmt, clippy, build, tests, docs, coverage — and skips the heavier steps. Opt into them with `--fuzz` (the `cargo fuzz` targets), `--install` (`run_install.fish`), and `--musl`/`--unstable` (a Docker-based MUSL build via `run_musl.fish`, `--unstable` building with `--features unstable`). You can also run `scripts/run_musl.fish` directly to build the static MUSL binaries locally.)
+**Final verification.** Always run `rake` as the final verification step before considering a change complete. (`rake` / `rake most` runs the fast, Docker-free code check — fmt, clippy, build, tests, docs, coverage — and skips the heavier opt-in targets. Run `rake fuzz` for the `cargo fuzz` targets, `rake install` to install binaries, `rake musl` / `rake musl-unstable` for the Docker-based MUSL build (`musl-unstable` adds `--features unstable`). Run `rake all` to run every target in sequence.)
 
 ### Running the system end-to-end
 
